@@ -1,0 +1,6 @@
+# Application internals are never web-reachable.
+Require all denied
+<IfModule !mod_authz_core.c>
+  Order allow,deny
+  Deny from all
+</IfModule>

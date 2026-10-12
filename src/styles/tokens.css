@@ -1,0 +1,167 @@
+/*
+ * SzigLet design tokens.
+ *
+ * Dark is the default because the app is mostly used in the evening on a
+ * phone. Light is a full peer, not an afterthought — every colour below has a
+ * counterpart, so components never hard-code a literal.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, from furthest back to closest to the reader. */
+  --bg: #0a0b0e;
+  --bg-tint: radial-gradient(
+      120% 80% at 50% -10%,
+      rgba(139, 124, 246, 0.13),
+      transparent 60%
+    ),
+    #0a0b0e;
+  --surface: #14161b;
+  --surface-2: #1b1e25;
+  --surface-3: #22262f;
+  --surface-glass: rgba(20, 22, 27, 0.78);
+
+  /* Lines and separators. */
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.13);
+
+  /* Text. */
+  --ink: #eceef2;
+  --ink-muted: #9aa1ae;
+  --ink-faint: #6b7280;
+  --ink-inverted: #0b0b11;
+
+  /* The single accent. Used sparingly — that is what makes it read as calm. */
+  --accent: #8b7cf6;
+  --accent-soft: #a79bff;
+  --accent-dim: rgba(139, 124, 246, 0.16);
+  --accent-line: rgba(139, 124, 246, 0.38);
+  --on-accent: #0b0a14;
+
+  /* Study semantics. Deliberately desaturated so they sit beside the accent. */
+  --known: #5ed69b;
+  --known-dim: rgba(94, 214, 155, 0.15);
+  --rehearse: #f0b35b;
+  --rehearse-dim: rgba(240, 179, 91, 0.15);
+  --wrong: #f2707f;
+  --wrong-dim: rgba(242, 112, 127, 0.15);
+
+  /* Radii. */
+  --r-sm: 9px;
+  --r-md: 13px;
+  --r-lg: 19px;
+  --r-xl: 26px;
+  --r-full: 999px;
+
+  /* Elevation. Two soft layers read better than one hard one. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 14px -4px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 18px 48px -12px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-card: 0 22px 60px -20px rgba(0, 0, 0, 0.8), 0 0 0 1px var(--line);
+
+  /* Motion. One easing for entrances, one spring-ish for interactions. */
+  --ease: cubic-bezier(0.22, 0.68, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.46, 0.64, 1);
+  --t-fast: 120ms;
+  --t-base: 220ms;
+  --t-slow: 420ms;
+
+  /* Layout. */
+  --col: 34rem;
+  --gutter: 1.125rem;
+  --tabbar: 4.25rem;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text',
+    'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f6f6f9;
+  --bg-tint: radial-gradient(
+      120% 80% at 50% -10%,
+      rgba(139, 124, 246, 0.11),
+      transparent 60%
+    ),
+    #f6f6f9;
+  --surface: #ffffff;
+  --surface-2: #f1f1f6;
+  --surface-3: #e7e7ef;
+  --surface-glass: rgba(255, 255, 255, 0.8);
+
+  --line: rgba(16, 18, 27, 0.09);
+  --line-strong: rgba(16, 18, 27, 0.16);
+
+  --ink: #16181f;
+  --ink-muted: #585f6d;
+  --ink-faint: #8b92a1;
+  --ink-inverted: #ffffff;
+
+  --accent: #6a56e8;
+  --accent-soft: #5b45e0;
+  --accent-dim: rgba(106, 86, 232, 0.1);
+  --accent-line: rgba(106, 86, 232, 0.32);
+  --on-accent: #ffffff;
+
+  --known: #1f9d61;
+  --known-dim: rgba(31, 157, 97, 0.12);
+  --rehearse: #b5760c;
+  --rehearse-dim: rgba(181, 118, 12, 0.12);
+  --wrong: #d23a51;
+  --wrong-dim: rgba(210, 58, 81, 0.11);
+
+  --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.06);
+  --shadow-md: 0 4px 14px -6px rgba(16, 18, 27, 0.14), 0 1px 3px rgba(16, 18, 27, 0.06);
+  --shadow-lg: 0 18px 44px -14px rgba(16, 18, 27, 0.22), 0 2px 8px rgba(16, 18, 27, 0.07);
+  --shadow-card: 0 20px 50px -22px rgba(16, 18, 27, 0.28), 0 0 0 1px var(--line);
+}
+
+/* Follow the system when the reader has not chosen explicitly. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+
+    --bg: #f6f6f9;
+    --bg-tint: radial-gradient(
+        120% 80% at 50% -10%,
+        rgba(139, 124, 246, 0.11),
+        transparent 60%
+      ),
+      #f6f6f9;
+    --surface: #ffffff;
+    --surface-2: #f1f1f6;
+    --surface-3: #e7e7ef;
+    --surface-glass: rgba(255, 255, 255, 0.8);
+
+    --line: rgba(16, 18, 27, 0.09);
+    --line-strong: rgba(16, 18, 27, 0.16);
+
+    --ink: #16181f;
+    --ink-muted: #585f6d;
+    --ink-faint: #8b92a1;
+    --ink-inverted: #ffffff;
+
+    --accent: #6a56e8;
+    --accent-soft: #5b45e0;
+    --accent-dim: rgba(106, 86, 232, 0.1);
+    --accent-line: rgba(106, 86, 232, 0.32);
+    --on-accent: #ffffff;
+
+    --known: #1f9d61;
+    --known-dim: rgba(31, 157, 97, 0.12);
+    --rehearse: #b5760c;
+    --rehearse-dim: rgba(181, 118, 12, 0.12);
+    --wrong: #d23a51;
+    --wrong-dim: rgba(210, 58, 81, 0.11);
+
+    --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.06);
+    --shadow-md: 0 4px 14px -6px rgba(16, 18, 27, 0.14), 0 1px 3px rgba(16, 18, 27, 0.06);
+    --shadow-lg: 0 18px 44px -14px rgba(16, 18, 27, 0.22), 0 2px 8px rgba(16, 18, 27, 0.07);
+    --shadow-card: 0 20px 50px -22px rgba(16, 18, 27, 0.28), 0 0 0 1px var(--line);
+  }
+}

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="hu">
+  <head>
+    <meta charset="utf-8" />
+    <title>SzigLet</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5"
+    />
+    <meta name="description" content="A shared flashcard library — swipe to learn, test to be sure." />
+    <meta name="theme-color" content="#0a0b0e" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f7f7f9" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <!-- Installed-app behaviour -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SzigLet" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/icon-192.png" sizes="192x192" />
+
+    <!-- Keep the first paint from flashing the wrong theme. -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('sziglet.theme')
+          if (saved === 'light' || saved === 'dark') {
+            document.documentElement.dataset.theme = saved
+          }
+        } catch (e) {}
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>SzigLet needs JavaScript to run.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

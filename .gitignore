@@ -1,0 +1,7 @@
+node_modules/
+dist/
+deploy/build/
+server/app/config.php
+*.local
+.DS_Store
+.vite/
