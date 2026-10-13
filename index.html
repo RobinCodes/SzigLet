@@ -1,11 +1,16 @@
 <!doctype html>
-<html lang="hu">
+<html lang="it">
   <head>
     <meta charset="utf-8" />
     <title>SzigLet</title>
+    <!--
+      interactive-widget=resizes-content makes the layout viewport shrink when
+      the on-screen keyboard opens, so a bottom sheet and its buttons stay
+      above it instead of hiding behind it.
+    -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5, interactive-widget=resizes-content"
     />
     <meta name="description" content="A shared flashcard library — swipe to learn, test to be sure." />
     <meta name="theme-color" content="#0a0b0e" media="(prefers-color-scheme: dark)" />
@@ -22,13 +27,17 @@
     <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/icons/icon-192.png" sizes="192x192" />
 
-    <!-- Keep the first paint from flashing the wrong theme. -->
+    <!-- Keep the first paint from flashing the wrong theme or language. -->
     <script>
       (function () {
         try {
-          var saved = localStorage.getItem('sziglet.theme')
-          if (saved === 'light' || saved === 'dark') {
-            document.documentElement.dataset.theme = saved
+          var theme = localStorage.getItem('sziglet.theme')
+          if (theme === 'light' || theme === 'dark') {
+            document.documentElement.dataset.theme = theme
+          }
+          var lang = localStorage.getItem('sziglet.lang')
+          if (lang === 'it' || lang === 'hu' || lang === 'en') {
+            document.documentElement.lang = lang
           }
         } catch (e) {}
       })()

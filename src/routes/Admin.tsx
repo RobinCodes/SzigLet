@@ -1,29 +1,37 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ApiError, api } from '../lib/api'
+import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useToast } from '../lib/toast'
-import { initials, plural, relativeTime } from '../lib/format'
+import { useI18n } from '../lib/i18n'
+import { errorText } from '../lib/errors'
+import { initials } from '../lib/format'
 import type { AdminOverview, AdminUser, Role } from '../lib/types'
 import { Shell, TopBar } from '../components/Shell'
 import { Empty, Spinner } from '../components/Bits'
 import { Icon } from '../components/Icon'
 import { Sheet } from '../components/Sheet'
 
-const ROLE_LABEL: Record<Role, string> = {
-  viewer: 'Learner',
-  editor: 'Editor',
-  owner: 'Owner',
-}
-
 export function Admin() {
   const { user } = useAuth()
   const toast = useToast()
+  const { t, tx, relative } = useI18n()
 
   const [users, setUsers] = useState<AdminUser[] | null>(null)
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [removing, setRemoving] = useState<AdminUser | null>(null)
+  const [promoting, setPromoting] = useState<AdminUser | null>(null)
   const [showLog, setShowLog] = useState(false)
+
+  const roleLabel = useCallback(
+    (role: Role) =>
+      role === 'owner'
+        ? t('account.roleOwner')
+        : role === 'editor'
+          ? t('account.roleEditor')
+          : t('account.roleLearner'),
+    [t],
+  )
 
   const load = useCallback(() => {
     Promise.all([api.adminUsers(), api.adminOverview()])
@@ -33,23 +41,27 @@ export function Admin() {
         setError(null)
       })
       .catch((caught: unknown) => {
-        setError(caught instanceof ApiError ? caught.message : 'Could not load the admin page.')
+        setError(errorText(t, caught, 'admin.loadFailed'))
       })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(load, [load])
 
   const changeRole = async (target: AdminUser, role: Role) => {
+    setPromoting(null)
     // Optimistic: the list snaps back if the server disagrees.
     setUsers((current) =>
       current?.map((item) => (item.id === target.id ? { ...item, role } : item)) ?? null,
     )
     try {
       await api.setRole(target.id, role)
-      toast.success(`${target.username} is now ${ROLE_LABEL[role].toLowerCase()}.`)
-      load()
+      toast.success(
+        t('admin.roleChanged', { name: target.username, role: roleLabel(role).toLowerCase() }),
+      )
     } catch (caught) {
-      toast.error(caught instanceof ApiError ? caught.message : 'Could not change the role.')
+      toast.error(errorText(t, caught, 'admin.roleFailed'))
+    } finally {
       load()
     }
   }
@@ -60,19 +72,19 @@ export function Admin() {
     }
     try {
       await api.deleteUser(removing.id)
-      toast.success(`${removing.username} removed.`)
+      toast.success(t('admin.removed', { name: removing.username }))
       setRemoving(null)
       load()
     } catch (caught) {
-      toast.error(caught instanceof ApiError ? caught.message : 'Could not remove the account.')
+      toast.error(errorText(t, caught, 'admin.removeFailed'))
     }
   }
 
   if (error) {
     return (
       <Shell>
-        <TopBar title="Admin" back="/" />
-        <Empty icon="alert" title="Admin unavailable">
+        <TopBar title={t('admin.title')} back="/" />
+        <Empty icon="alert" title={t('admin.unavailableTitle')}>
           {error}
         </Empty>
       </Shell>
@@ -82,7 +94,7 @@ export function Admin() {
   if (!users || !overview) {
     return (
       <Shell>
-        <TopBar title="Admin" back="/" />
+        <TopBar title={t('admin.title')} back="/" />
         <Spinner />
       </Shell>
     )
@@ -91,13 +103,13 @@ export function Admin() {
   return (
     <Shell>
       <TopBar
-        title="Admin"
+        title={t('admin.title')}
         back="/"
         actions={
           <button
             type="button"
             className="icon-btn"
-            aria-label="Activity log"
+            aria-label={t('admin.activityLog')}
             onClick={() => setShowLog(true)}
           >
             <Icon name="list" />
@@ -109,40 +121,44 @@ export function Admin() {
         <section className="statgrid">
           <div className="stat">
             <div className="stat__value">{overview.users}</div>
-            <div className="stat__label">People</div>
+            <div className="stat__label">{t('admin.people')}</div>
           </div>
           <div className="stat">
             <div className="stat__value">{overview.sets}</div>
-            <div className="stat__label">Sets</div>
+            <div className="stat__label">{t('admin.sets')}</div>
           </div>
           <div className="stat">
             <div className="stat__value">{overview.cards}</div>
-            <div className="stat__label">Cards</div>
+            <div className="stat__label">{t('admin.cards')}</div>
           </div>
         </section>
 
         <div className="panel row" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
           <Icon name="chart" style={{ color: 'var(--accent)', flex: 'none' }} />
           <p className="small grow">
-            {plural(overview.active7d, 'person', 'people')} studied in the last week ·{' '}
-            {plural(overview.runs, 'test', 'tests')} taken all together.
+            {t('admin.weekSummary', {
+              people: t('admin.peopleCount', { n: overview.active7d }),
+              tests: t('admin.testsCount', { n: overview.runs }),
+            })}
           </p>
         </div>
 
         <section className="stack" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
           <div className="spread">
-            <p className="eyebrow">People</p>
+            <p className="eyebrow">{t('admin.people')}</p>
             <span className="tiny faint">
-              {plural(overview.editors, 'editor', 'editors')}
+              {t('admin.editorsCount', { n: overview.editors })}
             </span>
           </div>
 
           <div className="panel row" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
             <Icon name="shield" style={{ color: 'var(--ink-faint)', flex: 'none' }} />
             <p className="small grow">
-              <strong>Editors</strong> can create and change sets for everyone.{' '}
-              <strong>Learners</strong> can only study. There is no way back from deleting an
-              account.
+              {tx('admin.rolesNote', {
+                editors: <strong>{t('account.roleEditor')}</strong>,
+                owners: <strong>{t('account.roleOwner')}</strong>,
+                learners: <strong>{t('account.roleLearner')}</strong>,
+              })}
             </p>
           </div>
 
@@ -160,37 +176,53 @@ export function Admin() {
                       <span className="truncate" style={{ fontWeight: 580 }}>
                         {person.username}
                       </span>
-                      {isSelf && <span className="chip">you</span>}
+                      {isSelf && <span className="chip">{t('admin.youChip')}</span>}
                     </div>
                     <div className="tiny faint">
                       {person.lastSeenAt
-                        ? `seen ${relativeTime(person.lastSeenAt)}`
-                        : 'never signed in'}
-                      {person.runs > 0 && ` · ${plural(person.runs, 'test', 'tests')}`}
+                        ? t('admin.seen', { when: relative(person.lastSeenAt) })
+                        : t('admin.neverSignedIn')}
+                      {person.runs > 0 && ` · ${t('admin.testsCount', { n: person.runs })}`}
                     </div>
                   </div>
 
-                  {isSelf || person.role === 'owner' ? (
-                    <span className="chip chip--accent">{ROLE_LABEL[person.role]}</span>
+                  {isSelf ? (
+                    <span className="chip chip--accent">{roleLabel(person.role)}</span>
                   ) : (
                     <>
+                      {/*
+                        Owner is a real option here. There was no way to hand
+                        the keys to a second person before, which left one
+                        account as a single point of failure for the whole
+                        library.
+                      */}
                       <select
                         className="select"
                         value={person.role}
-                        aria-label={`Role for ${person.username}`}
-                        onChange={(event) => changeRole(person, event.target.value as Role)}
+                        aria-label={t('admin.roleFor', { name: person.username })}
+                        onChange={(event) => {
+                          const role = event.target.value as Role
+                          if (role === 'owner') {
+                            setPromoting(person)
+                            return
+                          }
+                          void changeRole(person, role)
+                        }}
                       >
-                        <option value="viewer">Learner</option>
-                        <option value="editor">Editor</option>
+                        <option value="viewer">{t('account.roleLearner')}</option>
+                        <option value="editor">{t('account.roleEditor')}</option>
+                        <option value="owner">{t('account.roleOwner')}</option>
                       </select>
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        aria-label={`Remove ${person.username}`}
-                        onClick={() => setRemoving(person)}
-                      >
-                        <Icon name="trash" style={{ width: 17, height: 17 }} />
-                      </button>
+                      {person.role !== 'owner' && (
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          aria-label={t('admin.remove', { name: person.username })}
+                          onClick={() => setRemoving(person)}
+                        >
+                          <Icon name="trash" style={{ width: 17, height: 17 }} />
+                        </button>
+                      )}
                     </>
                   )}
                 </div>
@@ -200,53 +232,81 @@ export function Admin() {
         </section>
       </div>
 
+      {promoting && (
+        <Sheet
+          title={t('admin.promoteTitle', { name: promoting.username })}
+          onClose={() => setPromoting(null)}
+          footer={
+            <>
+              <button
+                type="button"
+                className="btn btn--primary btn--block"
+                onClick={() => void changeRole(promoting, 'owner')}
+              >
+                <Icon name="shield" />
+                {t('admin.promoteConfirm')}
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--block"
+                onClick={() => setPromoting(null)}
+              >
+                {t('common.cancel')}
+              </button>
+            </>
+          }
+        >
+          <p className="muted small">{t('admin.promoteBody')}</p>
+        </Sheet>
+      )}
+
       {removing && (
-        <Sheet title={`Remove ${removing.username}?`} onClose={() => setRemoving(null)}>
-          <p className="muted small" style={{ marginBottom: '1rem' }}>
-            Their account, progress and test history are deleted. The shared sets are not
-            affected. This cannot be undone.
-          </p>
-          <div className="stack" style={{ '--gap': '0.5rem' } as React.CSSProperties}>
-            <button type="button" className="btn btn--danger btn--block" onClick={remove}>
-              <Icon name="trash" />
-              Remove the account
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost btn--block"
-              onClick={() => setRemoving(null)}
-            >
-              Cancel
-            </button>
-          </div>
+        <Sheet
+          title={t('admin.removeTitle', { name: removing.username })}
+          onClose={() => setRemoving(null)}
+          footer={
+            <>
+              <button type="button" className="btn btn--danger btn--block" onClick={remove}>
+                <Icon name="trash" />
+                {t('admin.removeConfirm')}
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--block"
+                onClick={() => setRemoving(null)}
+              >
+                {t('common.cancel')}
+              </button>
+            </>
+          }
+        >
+          <p className="muted small">{t('admin.removeBody')}</p>
         </Sheet>
       )}
 
       {showLog && (
-        <Sheet title="Recent activity" onClose={() => setShowLog(false)}>
-          <div style={{ maxHeight: '55vh', overflowY: 'auto', margin: '0 -0.25rem' }}>
-            {overview.audit.length === 0 ? (
-              <p className="muted small">Nothing logged yet.</p>
-            ) : (
-              overview.audit.map((entry, index) => (
-                <div
-                  className="row"
-                  key={index}
-                  style={{
-                    '--gap': '0.5rem',
-                    padding: '0.5rem 0.25rem',
-                    borderBottom: '1px solid var(--line)',
-                  } as React.CSSProperties}
-                >
-                  <span className="chip">{entry.action.replace(/_/g, ' ')}</span>
-                  <span className="grow small truncate">{entry.detail || '—'}</span>
-                  <span className="tiny faint" style={{ flex: 'none' }}>
-                    {entry.by ?? 'system'} · {relativeTime(entry.at)}
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
+        <Sheet title={t('admin.recentActivity')} onClose={() => setShowLog(false)}>
+          {overview.audit.length === 0 ? (
+            <p className="muted small">{t('admin.nothingLogged')}</p>
+          ) : (
+            overview.audit.map((entry, index) => (
+              <div
+                className="row"
+                key={index}
+                style={{
+                  '--gap': '0.5rem',
+                  padding: '0.5rem 0.25rem',
+                  borderBottom: '1px solid var(--line)',
+                } as React.CSSProperties}
+              >
+                <span className="chip">{entry.action.replace(/_/g, ' ')}</span>
+                <span className="grow small truncate">{entry.detail || '—'}</span>
+                <span className="tiny faint" style={{ flex: 'none' }}>
+                  {entry.by ?? t('admin.system')} · {relative(entry.at)}
+                </span>
+              </div>
+            ))
+          )}
         </Sheet>
       )}
     </Shell>

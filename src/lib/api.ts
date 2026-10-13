@@ -2,6 +2,7 @@ import { solveChallenge, type Challenge } from './pow'
 import type {
   AdminOverview,
   AdminUser,
+  CardExtras,
   Direction,
   ProgressUpdate,
   RunResult,
@@ -74,7 +75,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       method: wireMethod,
       headers,
       credentials: 'same-origin',
-      cache: 'no-store',
+      // No `cache` override: the API already answers with `Cache-Control:
+      // no-store`, and leaving the request's own cache mode alone is what
+      // lets the service worker keep a copy for offline use.
       signal: options.signal,
       body:
         options.body === undefined && !tunnelled
@@ -135,7 +138,11 @@ async function forgetCachedResponses(): Promise<void> {
   try {
     navigator.serviceWorker?.controller?.postMessage('clear-api-cache')
     if ('caches' in window) {
-      await caches.delete('sziglet-api')
+      // By prefix, so an older build's cache goes too.
+      const names = await caches.keys()
+      await Promise.all(
+        names.filter((name) => name.startsWith('sziglet-api')).map((name) => caches.delete(name)),
+      )
     }
     localStorage.removeItem(OUTBOX_KEY)
   } catch {
@@ -144,6 +151,15 @@ async function forgetCachedResponses(): Promise<void> {
 }
 
 // ── Authentication ────────────────────────────────────────────────────────────
+
+/** A card on the way to the server. The id keeps progress across an edit. */
+export type CardInput = {
+  id?: number
+  a: string
+  b: string
+  note?: string
+  extras?: CardExtras
+}
 
 export type Session = { user: User; csrf: string }
 export type Me = { user: User | null; registrationOpen: boolean; canEdit: boolean }
@@ -199,7 +215,7 @@ export const api = {
     langA: string
     langB: string
     published: boolean
-    cards?: { a: string; b: string; note?: string }[]
+    cards?: CardInput[]
   }) => request<StudySet>('/sets', { method: 'POST', body }),
 
   updateSet: (
@@ -211,7 +227,7 @@ export const api = {
       langB: string
       published: boolean
       sortOrder: number
-      cards: { id?: number; a: string; b: string; note?: string }[]
+      cards: CardInput[]
     }>,
   ) => request<StudySet>(`/sets/${id}`, { method: 'PATCH', body }),
 

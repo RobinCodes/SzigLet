@@ -9,7 +9,7 @@ namespace SzigLet;
  */
 final class Schema
 {
-    public const VERSION = 1;
+    public const VERSION = 2;
 
     public static function ensure(): void
     {
@@ -19,6 +19,9 @@ final class Schema
         }
         if ($have < 1) {
             self::v1();
+        }
+        if ($have < 2) {
+            self::v2();
         }
         Db::run(
             'INSERT INTO sl_meta (k, v) VALUES (:k, :v)
@@ -102,6 +105,7 @@ final class Schema
             side_a     VARCHAR(300) NOT NULL,
             side_b     VARCHAR(300) NOT NULL,
             note       VARCHAR(300) NULL,
+            extras     TEXT NULL,
             position   INT NOT NULL DEFAULT 0,
             created_at INT UNSIGNED NOT NULL,
             KEY k_cards_set (set_id, position),
@@ -166,5 +170,30 @@ final class Schema
             created_at INT UNSIGNED NOT NULL,
             KEY k_audit_created (created_at)
         ) $t");
+    }
+
+    /**
+     * Articles, plurals, genders and verb tables, as JSON in one column.
+     *
+     * TEXT rather than a JSON column: MariaDB only aliases JSON to LONGTEXT
+     * anyway, and shared hosting is not somewhere to find out the hard way
+     * which version you were given.
+     */
+    private static function v2(): void
+    {
+        if (self::hasColumn('sl_cards', 'extras')) {
+            return;
+        }
+        Db::run('ALTER TABLE sl_cards ADD COLUMN extras TEXT NULL AFTER note');
+    }
+
+    private static function hasColumn(string $table, string $column): bool
+    {
+        $found = Db::value(
+            'SELECT COUNT(*) FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND COLUMN_NAME = :c',
+            ['t' => $table, 'c' => $column],
+        );
+        return (int) $found > 0;
     }
 }

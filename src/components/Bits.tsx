@@ -1,28 +1,32 @@
 import type { ReactNode } from 'react'
 import { Icon, type IconName } from './Icon'
 
-/** Circular progress, used for per-set completion. */
-export function Ring({
-  value,
-  total,
-  size = 44,
-  tone = 'accent',
+/**
+ * Two concentric arcs, one per study direction.
+ *
+ * One number averaged over both directions was hiding the thing worth seeing:
+ * which way round a set still needs work. Italian→Hungarian is the outer ring.
+ */
+export function DualRing({
+  outer,
+  inner,
+  size = 46,
   label,
 }: {
-  value: number
-  total: number
+  /** 0 to 1. */
+  outer: number
+  inner: number
   size?: number
-  tone?: 'accent' | 'known'
-  label?: string
+  label: string
 }) {
-  const stroke = size >= 60 ? 5 : 4
-  const radius = (size - stroke) / 2
-  const circumference = 2 * Math.PI * radius
-  const fraction = total > 0 ? Math.min(1, value / total) : 0
+  const stroke = 4
+  const outerRadius = (size - stroke) / 2
+  const innerRadius = outerRadius - stroke - 2
 
-  return (
-    <div className="ring" style={{ width: size, height: size }}>
-      <svg width={size} height={size} aria-hidden="true">
+  const arc = (radius: number, fraction: number, className: string) => {
+    const circumference = 2 * Math.PI * radius
+    return (
+      <>
         <circle
           className="ring__track"
           cx={size / 2}
@@ -32,17 +36,25 @@ export function Ring({
           strokeWidth={stroke}
         />
         <circle
-          className={`ring__value${tone === 'known' ? ' ring__value--known' : ''}`}
+          className={className}
           cx={size / 2}
           cy={size / 2}
           r={radius}
           fill="none"
           strokeWidth={stroke}
           strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - fraction)}
+          strokeDashoffset={circumference * (1 - Math.min(1, Math.max(0, fraction)))}
         />
+      </>
+    )
+  }
+
+  return (
+    <div className="ring" style={{ width: size, height: size }} role="img" aria-label={label}>
+      <svg width={size} height={size}>
+        {arc(outerRadius, outer, 'ring__value')}
+        {arc(innerRadius, inner, 'ring__value ring__value--second')}
       </svg>
-      <span className="ring__label">{label ?? `${Math.round(fraction * 100)}`}</span>
     </div>
   )
 }

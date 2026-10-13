@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { detectBrowser, detectPlatform, installPrompt, isInstalled } from '../lib/platform'
+import { detectBrowser, detectPlatform, installPrompt, useIsInstalled } from '../lib/platform'
 import { useAuth } from '../lib/auth'
 import { useToast } from '../lib/toast'
+import { useI18n } from '../lib/i18n'
 import { Shell, TopBar } from '../components/Shell'
 import { Segmented } from '../components/Bits'
 import { Icon, Logo } from '../components/Icon'
@@ -164,7 +165,7 @@ function MenuRowFigure({ label, caption }: { label: string; caption: string }) {
   )
 }
 
-function Step({ n, children }: { n: number; children: React.ReactNode }) {
+function Step({ n, children }: { n: number; children: ReactNode }) {
   return (
     <li className="step">
       <span className="step__num">{n}</span>
@@ -176,35 +177,48 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
 export function Install() {
   const { user } = useAuth()
   const toast = useToast()
+  const { t, tx } = useI18n()
 
   // Naming the real address is clearer than naming the app, especially when
   // somebody is following these steps on a second device.
   const host = typeof window === 'undefined' ? 'this page' : window.location.host
   const [guide, setGuide] = useState<Guide>(() => detectPlatform())
   const [promptReady, setPromptReady] = useState(installPrompt.available)
-  const [installed, setInstalled] = useState(isInstalled())
+  const installed = useIsInstalled()
   const browser = detectBrowser()
 
   useEffect(() => installPrompt.subscribe(setPromptReady), [])
 
-  useEffect(() => {
-    const media = window.matchMedia('(display-mode: standalone)')
-    const onChange = () => setInstalled(isInstalled())
-    media.addEventListener('change', onChange)
-    return () => media.removeEventListener('change', onChange)
-  }, [])
-
   const install = async () => {
-    const accepted = await installPrompt.show()
-    if (accepted) {
-      toast.success('SzigLet is on your home screen.')
-      setInstalled(true)
+    if (await installPrompt.show()) {
+      toast.success(t('install.doneToast'))
     }
+  }
+
+  // The names of the bits of browser chrome being pointed at, as bold inline
+  // fragments rather than three near-identical sentences per language.
+  const chrome = {
+    host: <strong>{host}</strong>,
+    safari: <strong>Safari</strong>,
+    chrome: <strong>Chrome</strong>,
+    edge: <strong>Edge</strong>,
+    dots: <strong>⋮</strong>,
+    share: <strong>{t('install.shareWord')}</strong>,
+    addToHome: <strong>{t('install.addToHomeWord')}</strong>,
+    add: <strong>{t('install.addWord')}</strong>,
+    install: <strong>{t('install.installWord')}</strong>,
+    installApp: <strong>{t('install.installAppWord')}</strong>,
+    editActions: <strong>{t('install.editActionsWord')}</strong>,
+    private: <strong>{t('install.privateWord')}</strong>,
+    bottomBar: <strong>{t('install.bottomBarWord')}</strong>,
+    samsungPath: <strong>{t('install.samsungPathWord')}</strong>,
+    installIcon: <strong>{t('install.installIconWord')}</strong>,
+    path: <strong>{t('install.safariPathWord')}</strong>,
   }
 
   return (
     <Shell tabs={Boolean(user)}>
-      <TopBar title="Install SzigLet" back={user ? '/' : '/signin'} />
+      <TopBar title={t('install.title')} back={user ? '/' : '/signin'} />
 
       <div className="stack enter" style={{ '--gap': '1.5rem' } as React.CSSProperties}>
         {installed ? (
@@ -220,14 +234,11 @@ export function Install() {
             <div style={{ color: 'var(--known)' }}>
               <Icon name="check" width={34} height={34} />
             </div>
-            <h2>Already installed</h2>
-            <p className="muted small">
-              You are running SzigLet as an app. It opens from your home screen, fills the
-              whole screen and keeps your library available offline.
-            </p>
+            <h2>{t('install.installedTitle')}</h2>
+            <p className="muted small">{t('install.installedBody')}</p>
             {user && (
               <Link to="/" className="btn btn--primary" style={{ marginTop: '0.4rem' }}>
-                Start studying
+                {t('install.startStudying')}
               </Link>
             )}
           </div>
@@ -250,9 +261,9 @@ export function Install() {
                 <Logo size={30} />
               </div>
               <div className="grow">
-                <h1 style={{ fontSize: '1.35rem' }}>Put SzigLet on your home screen</h1>
+                <h1 style={{ fontSize: '1.35rem' }}>{t('install.headline')}</h1>
                 <p className="muted small" style={{ marginTop: '0.2rem' }}>
-                  No app store, no download. It becomes a real app icon in about ten seconds.
+                  {t('install.sub')}
                 </p>
               </div>
             </div>
@@ -260,72 +271,55 @@ export function Install() {
             {promptReady && (
               <button type="button" className="btn btn--primary btn--lg btn--block" onClick={install}>
                 <Icon name="install" />
-                Install now
+                {t('install.now')}
               </button>
             )}
 
             <Segmented
-              label="Choose your device"
+              label={t('install.deviceLabel')}
               value={guide}
               onChange={setGuide}
               options={[
-                { value: 'ios', label: 'iPhone / iPad' },
-                { value: 'android', label: 'Android' },
-                { value: 'desktop', label: 'Computer' },
+                { value: 'ios', label: t('install.ios') },
+                { value: 'android', label: t('install.android') },
+                { value: 'desktop', label: t('install.desktop') },
               ]}
             />
 
             {/* ── iOS ───────────────────────────────────────────────────── */}
             {guide === 'ios' && (
               <section className="stack" style={{ '--gap': '0.75rem' } as React.CSSProperties}>
-                <p className="eyebrow">iPhone and iPad</p>
+                <p className="eyebrow">{t('install.iosHeading')}</p>
 
                 {browser === 'firefox' && (
                   <div className="panel row" style={{ borderColor: 'var(--rehearse)' }}>
                     <Icon name="alert" style={{ color: 'var(--rehearse)', flex: 'none' }} />
-                    <p className="small grow">
-                      Firefox on iOS cannot add apps to the home screen. Open this page in{' '}
-                      <strong>Safari</strong> first.
-                    </p>
+                    <p className="small grow">{tx('install.iosFirefox', chrome)}</p>
                   </div>
                 )}
 
                 <ol className="steps">
-                  <Step n={1}>
-                    Open <strong>{host}</strong> in <strong>Safari</strong>. Chrome works
-                    too on recent iOS versions, but Safari is the sure thing.
-                  </Step>
+                  <Step n={1}>{tx('install.iosStep1', chrome)}</Step>
                   <Step n={2}>
-                    Tap the <strong>Share</strong> button — the square with an arrow pointing
-                    up. In Safari it sits in the <strong>bar at the bottom</strong> of the
-                    screen; in Chrome it is next to the address bar at the top.
+                    {tx('install.iosStep2', chrome)}
                     <PhoneFigure
                       highlight="bottom-share"
-                      caption="The share button in the Safari toolbar at the bottom of the screen"
+                      caption={t('install.iosStep2Caption')}
                     />
                   </Step>
                   <Step n={3}>
-                    Scroll down the grey list of actions and tap{' '}
-                    <strong>Add to Home Screen</strong>.
+                    {tx('install.iosStep3', chrome)}
                     <MenuRowFigure
-                      label="Add to Home Screen"
-                      caption="The Add to Home Screen row in the iOS share sheet"
+                      label={t('install.addToHomeLabel')}
+                      caption={t('install.iosStep3Caption')}
                     />
                   </Step>
-                  <Step n={4}>
-                    Tap <strong>Add</strong> in the top right. The SzigLet icon appears on
-                    your home screen.
-                  </Step>
+                  <Step n={4}>{tx('install.iosStep4', chrome)}</Step>
                 </ol>
 
                 <div className="panel row" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
                   <Icon name="sparkle" style={{ color: 'var(--accent)', flex: 'none' }} />
-                  <p className="small grow">
-                    Can't find <em>Add to Home Screen</em>? Swipe the bottom row of the share
-                    sheet to the left and tap <strong>Edit Actions</strong> to pin it, or make
-                    sure you are not in a <strong>Private</strong> tab — iOS hides the option
-                    there.
-                  </p>
+                  <p className="small grow">{tx('install.iosTip', chrome)}</p>
                 </div>
               </section>
             )}
@@ -333,41 +327,27 @@ export function Install() {
             {/* ── Android ───────────────────────────────────────────────── */}
             {guide === 'android' && (
               <section className="stack" style={{ '--gap': '0.75rem' } as React.CSSProperties}>
-                <p className="eyebrow">Android</p>
+                <p className="eyebrow">{t('install.androidHeading')}</p>
 
                 <ol className="steps">
-                  <Step n={1}>
-                    Open <strong>{host}</strong> in <strong>Chrome</strong> (or Samsung
-                    Internet, or Firefox — all three can do this).
-                  </Step>
+                  <Step n={1}>{tx('install.androidStep1', chrome)}</Step>
                   <Step n={2}>
-                    Tap the <strong>⋮</strong> menu in the top right corner.
-                    <PhoneFigure
-                      highlight="top-menu"
-                      caption="The three-dot menu in the top right corner of Chrome"
-                    />
+                    {tx('install.androidStep2', chrome)}
+                    <PhoneFigure highlight="top-menu" caption={t('install.androidStep2Caption')} />
                   </Step>
                   <Step n={3}>
-                    Choose <strong>Add to Home screen</strong> — newer Chrome versions call it{' '}
-                    <strong>Install app</strong>, and Samsung Internet puts it under{' '}
-                    <strong>Add page to → Home screen</strong>.
+                    {tx('install.androidStep3', chrome)}
                     <MenuRowFigure
-                      label="Install app"
-                      caption="The Install app row in the Chrome menu"
+                      label={t('install.installAppLabel')}
+                      caption={t('install.androidStep3Caption')}
                     />
                   </Step>
-                  <Step n={4}>
-                    Confirm with <strong>Install</strong> or <strong>Add</strong>. SzigLet
-                    lands in your app drawer and on your home screen.
-                  </Step>
+                  <Step n={4}>{tx('install.androidStep4', chrome)}</Step>
                 </ol>
 
                 <div className="panel row" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
                   <Icon name="sparkle" style={{ color: 'var(--accent)', flex: 'none' }} />
-                  <p className="small grow">
-                    Chrome often shows an <strong>Install</strong> banner by itself. If you see
-                    it, that is the same thing — one tap and you are done.
-                  </p>
+                  <p className="small grow">{tx('install.androidTip', chrome)}</p>
                 </div>
               </section>
             )}
@@ -375,63 +355,57 @@ export function Install() {
             {/* ── Desktop ───────────────────────────────────────────────── */}
             {guide === 'desktop' && (
               <section className="stack" style={{ '--gap': '0.75rem' } as React.CSSProperties}>
-                <p className="eyebrow">Windows, macOS and Linux</p>
+                <p className="eyebrow">{t('install.desktopHeading')}</p>
 
                 <ol className="steps">
-                  <Step n={1}>
-                    Open SzigLet in <strong>Chrome</strong> or <strong>Edge</strong>.
-                  </Step>
+                  <Step n={1}>{tx('install.desktopStep1', chrome)}</Step>
                   <Step n={2}>
-                    Click the <strong>install icon</strong> in the address bar — a small screen
-                    with a downward arrow, on the right-hand side.
-                    <PhoneFigure
-                      highlight="address"
-                      caption="The install icon at the right of the address bar"
-                    />
+                    {tx('install.desktopStep2', chrome)}
+                    <PhoneFigure highlight="address" caption={t('install.desktopStep2Caption')} />
                   </Step>
-                  <Step n={3}>
-                    Click <strong>Install</strong>. SzigLet opens in its own window, without
-                    tabs, and you can pin it to your taskbar or dock.
-                  </Step>
+                  <Step n={3}>{tx('install.desktopStep3', chrome)}</Step>
                 </ol>
 
                 <div className="panel row" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
                   <Icon name="keyboard" style={{ color: 'var(--accent)', flex: 'none' }} />
                   <p className="small grow">
-                    On a laptop the flashcards take keyboard shortcuts:{' '}
-                    <span className="kbd">←</span> to rehearse, <span className="kbd">→</span>{' '}
-                    for known, <span className="kbd">Space</span> to flip. In a multiple
-                    choice test, <span className="kbd">1</span>–<span className="kbd">4</span>{' '}
-                    pick an answer.
+                    {tx('install.desktopKeys', {
+                      left: <span className="kbd">←</span>,
+                      right: <span className="kbd">→</span>,
+                      space: <span className="kbd">Space</span>,
+                      oneToFour: (
+                        <>
+                          <span className="kbd">1</span>–<span className="kbd">4</span>
+                        </>
+                      ),
+                    })}
                   </p>
                 </div>
 
-                <p className="tiny faint">
-                  Safari on macOS can do this too: <strong>File → Add to Dock</strong>.
-                </p>
+                <p className="tiny faint">{tx('install.desktopSafari', chrome)}</p>
               </section>
             )}
           </>
         )}
 
         <section className="stack" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
-          <p className="eyebrow">Why bother</p>
+          <p className="eyebrow">{t('install.whyBother')}</p>
           <div className="panel panel--flush">
             {[
               {
                 icon: 'play' as const,
-                title: 'Opens instantly',
-                body: 'No address bar, no browser tabs — it starts straight on your library.',
+                title: t('install.whyInstant'),
+                body: t('install.whyInstantBody'),
               },
               {
                 icon: 'cloudOff' as const,
-                title: 'Works without signal',
-                body: 'Sets you have opened stay readable, and your swipes sync when you are back online.',
+                title: t('install.whyOffline'),
+                body: t('install.whyOfflineBody'),
               },
               {
                 icon: 'cards' as const,
-                title: 'Full screen cards',
-                body: 'The swipe deck gets the whole display, which is how it is meant to be used.',
+                title: t('install.whyFullScreen'),
+                body: t('install.whyFullScreenBody'),
               },
             ].map((item) => (
               <div className="cardrow" key={item.title} style={{ alignItems: 'flex-start' }}>

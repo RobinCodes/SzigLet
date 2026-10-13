@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ApiError, api, outbox } from '../lib/api'
+import { api, outbox } from '../lib/api'
 import { useToast } from '../lib/toast'
+import { useI18n } from '../lib/i18n'
+import { errorText } from '../lib/errors'
 import { haptics } from '../lib/haptics'
 import { answerLang, buildRound, isDeckCleared, promptLang, requeue } from '../lib/study'
-import { plural } from '../lib/format'
 import type { Card, Direction, ProgressUpdate, StudySet } from '../lib/types'
+import { readShow } from '../lib/display'
 import { Shell, TopBar } from '../components/Shell'
 import { Bar, Empty, Spinner } from '../components/Bits'
 import { Icon } from '../components/Icon'
+import { Sheet } from '../components/Sheet'
+import { Conjugation } from '../components/Conjugation'
 import { SwipeDeck, type DeckHandle, type Verdict } from '../components/SwipeDeck'
 
 /** Verdicts are batched so a round does not fire one request per card. */
@@ -19,6 +23,7 @@ export function Flashcards() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const toast = useToast()
+  const { t } = useI18n()
 
   const dir: Direction = params.get('dir') === 'ba' ? 'ba' : 'ab'
 
@@ -26,11 +31,29 @@ export function Flashcards() {
   const [cards, setCards] = useState<Card[]>([])
   const [queue, setQueue] = useState<Card[]>([])
   const [done, setDone] = useState(false)
+  const [verb, setVerb] = useState<Card | null>(null)
+
+  // Set once per round: changing what is shown mid-deck would make the cards
+  // already swiped incomparable with the ones still to come.
+  const [show] = useState(() => readShow(slug))
 
   const deck = useRef<DeckHandle | null>(null)
   const pending = useRef<ProgressUpdate[]>([])
   const startedAt = useRef(Date.now())
-  const seenCount = useRef(0)
+
+  /**
+   * How the round went on first sight of each card. A card pushed to rehearse
+   * comes round again, so counting every verdict would make a round of ten
+   * cards report fifteen answers and an accuracy nobody can interpret.
+   */
+  const seen = useRef(new Set<number>())
+  const firstPass = useRef({ total: 0, correct: 0 })
+
+  const resetRound = useCallback(() => {
+    seen.current = new Set<number>()
+    firstPass.current = { total: 0, correct: 0 }
+    startedAt.current = Date.now()
+  }, [])
 
   const flush = useCallback(async () => {
     const updates = pending.current
@@ -41,14 +64,14 @@ export function Flashcards() {
     try {
       const sent = await outbox.saveProgress(dir, updates)
       if (!sent) {
-        toast.show('Saved on this device — will sync later.')
+        toast.show(t('cards.savedLocally'))
       }
     } catch (caught) {
-      if (caught instanceof ApiError) {
-        toast.error(caught.message)
-      }
+      toast.error(errorText(t, caught, 'errors.generic'))
     }
-  }, [dir, toast])
+    // The toast helper and the translator are both stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dir])
 
   useEffect(() => {
     let cancelled = false
@@ -61,18 +84,17 @@ export function Flashcards() {
         setSet(result)
         setCards(result.cards)
         setQueue(buildRound(result.cards, dir))
-        startedAt.current = Date.now()
+        resetRound()
       })
       .catch((caught: unknown) => {
         if (!cancelled) {
-          toast.error(caught instanceof ApiError ? caught.message : 'Could not load this set.')
+          toast.error(errorText(t, caught, 'set.loadFailed'))
           navigate(`/s/${slug}`, { replace: true })
         }
       })
     return () => {
       cancelled = true
     }
-    // The toast helper is stable; re-running on it would reload the set.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, dir])
 
@@ -90,7 +112,13 @@ export function Flashcards() {
       )
 
       pending.current.push({ cardId: card.id, state })
-      seenCount.current += 1
+      if (!seen.current.has(card.id)) {
+        seen.current.add(card.id)
+        firstPass.current = {
+          total: firstPass.current.total + 1,
+          correct: firstPass.current.correct + (verdict === 'known' ? 1 : 0),
+        }
+      }
       if (pending.current.length >= FLUSH_EVERY) {
         void flush()
       }
@@ -116,8 +144,8 @@ export function Flashcards() {
             setId: set.id,
             dir,
             mode: 'flashcards',
-            total: seenCount.current,
-            correct: cards.filter((card) => card.state[dir] === 'known').length,
+            total: firstPass.current.total,
+            correct: firstPass.current.correct,
             durationMs: Date.now() - startedAt.current,
           })
           .catch(() => undefined),
@@ -143,8 +171,8 @@ export function Flashcards() {
     return (
       <Shell>
         <TopBar back={`/s/${slug}`} title={set.title} />
-        <Empty icon="cards" title="Nothing to study">
-          This set has no cards yet.
+        <Empty icon="cards" title={t('cards.nothingTitle')}>
+          {t('cards.nothingBody')}
         </Empty>
       </Shell>
     )
@@ -172,12 +200,12 @@ export function Flashcards() {
 
           <div>
             <h1 className="result__headline">
-              {cleared ? 'Every card is known' : 'Round finished'}
+              {cleared ? t('cards.allKnownTitle') : t('cards.roundFinished')}
             </h1>
             <p className="muted small" style={{ marginTop: '0.35rem' }}>
               {cleared
-                ? `All ${plural(cards.length, 'card', 'cards')} swiped to Known. Tests are unlocked.`
-                : `${knownCount} of ${cards.length} known so far.`}
+                ? t('cards.allKnownBody', { n: cards.length })
+                : t('cards.roundBody', { known: knownCount, total: cards.length })}
             </p>
           </div>
 
@@ -192,7 +220,7 @@ export function Flashcards() {
                 onClick={() => navigate(`/s/${slug}/test?dir=${dir}`)}
               >
                 <Icon name="trophy" />
-                Take the test
+                {t('cards.takeTheTest')}
               </button>
             ) : (
               <button
@@ -200,13 +228,12 @@ export function Flashcards() {
                 className="btn btn--primary btn--lg btn--block"
                 onClick={() => {
                   setQueue(buildRound(cards, dir))
-                  seenCount.current = 0
-                  startedAt.current = Date.now()
+                  resetRound()
                   setDone(false)
                 }}
               >
                 <Icon name="rotate" />
-                Keep going
+                {t('cards.keepGoing')}
               </button>
             )}
             <button
@@ -214,7 +241,7 @@ export function Flashcards() {
               className="btn btn--ghost btn--block"
               onClick={() => navigate(`/s/${slug}`)}
             >
-              Back to the set
+              {t('cards.backToSet')}
             </button>
           </div>
         </div>
@@ -238,9 +265,14 @@ export function Flashcards() {
       <div className="stack" style={{ '--gap': '0.4rem' } as React.CSSProperties}>
         <Bar value={knownCount} total={cards.length} tone="known" />
         <div className="spread tiny faint">
-          <span>{knownCount} known</span>
-          <span>{plural(queue.length, 'card left', 'cards left')}</span>
+          <span>{t('cards.knownCount', { n: knownCount })}</span>
+          <span>{t('cards.left', { n: queue.length })}</span>
         </div>
+        {/* The one case where the deck looks stuck: a single card that keeps
+            coming straight back because it is the only one not yet known. */}
+        {queue.length === 1 && cards.length > 1 && knownCount === cards.length - 1 && (
+          <p className="tiny faint center">{t('cards.lastOne')}</p>
+        )}
       </div>
 
       <SwipeDeck
@@ -248,7 +280,9 @@ export function Flashcards() {
         dir={dir}
         promptLabel={promptLang(set, dir)}
         answerLabel={answerLang(set, dir)}
+        show={show}
         onVerdict={onVerdict}
+        onConjugation={setVerb}
         handle={deck}
       />
 
@@ -259,12 +293,12 @@ export function Flashcards() {
           onClick={() => deck.current?.swipe('rehearse')}
         >
           <Icon name="rotate" />
-          Rehearse
+          {t('cards.rehearse')}
         </button>
         <button
           type="button"
           className="icon-btn"
-          aria-label="Flip the card"
+          aria-label={t('cards.flip')}
           onClick={() => deck.current?.flip()}
         >
           <Icon name="eye" size={22} />
@@ -275,9 +309,15 @@ export function Flashcards() {
           onClick={() => deck.current?.swipe('known')}
         >
           <Icon name="check" />
-          I know it
+          {t('cards.iKnowIt')}
         </button>
       </div>
+
+      {verb && (
+        <Sheet title={`${t('word.conjugation')} — ${verb.a}`} onClose={() => setVerb(null)}>
+          <Conjugation card={verb} />
+        </Sheet>
+      )}
     </Shell>
   )
 }

@@ -1,18 +1,88 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ApiError, api } from '../lib/api'
+import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
-import { plural } from '../lib/format'
-import type { StudySet } from '../lib/types'
+import { useI18n } from '../lib/i18n'
+import { errorText } from '../lib/errors'
+import { PERSONS, type CardExtras, type Gender, type Person, type Side, type StudySet } from '../lib/types'
 import { Shell, TopBar } from '../components/Shell'
 import { Spinner } from '../components/Bits'
 import { Icon } from '../components/Icon'
 import { Sheet } from '../components/Sheet'
 
-type Row = { key: string; id?: number; a: string; b: string; note: string }
+type Row = {
+  key: string
+  id?: number
+  a: string
+  b: string
+  note: string
+  extras: CardExtras
+  /** Which optional panels are on screen. All of them are the exception. */
+  showNote: boolean
+  showGrammar: boolean
+  showConj: boolean
+}
 
 let rowCounter = 0
-const newRow = (): Row => ({ key: `row-${rowCounter++}`, a: '', b: '', note: '' })
+const newRow = (): Row => ({
+  key: `row-${rowCounter++}`,
+  a: '',
+  b: '',
+  note: '',
+  extras: {},
+  showNote: false,
+  showGrammar: false,
+  showConj: false,
+})
+
+const SIDES: Side[] = ['a', 'b']
+
+/** Empty fields are absence, not empty strings, by the time this is saved. */
+function prune(extras: CardExtras): CardExtras | undefined {
+  const out: CardExtras = {}
+
+  for (const field of ['article', 'plural'] as const) {
+    const sides: Partial<Record<Side, string>> = {}
+    for (const side of SIDES) {
+      const value = extras[field]?.[side]?.trim()
+      if (value) {
+        sides[side] = value
+      }
+    }
+    if (Object.keys(sides).length > 0) {
+      out[field] = sides
+    }
+  }
+
+  const gender: Partial<Record<Side, Gender>> = {}
+  for (const side of SIDES) {
+    const value = extras.gender?.[side]
+    if (value === 'm' || value === 'f') {
+      gender[side] = value
+    }
+  }
+  if (Object.keys(gender).length > 0) {
+    out.gender = gender
+  }
+
+  const conj: Partial<Record<Person, string>> = {}
+  for (const person of PERSONS) {
+    const value = extras.conj?.[person]?.trim()
+    if (value) {
+      conj[person] = value
+    }
+  }
+  if (Object.keys(conj).length > 0) {
+    out.conj = conj
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/** True when a card already carries something worth keeping its panel open. */
+function hasGrammar(extras: CardExtras): boolean {
+  return Boolean(extras.article || extras.plural || extras.gender)
+}
 
 /**
  * Parses pasted word lists. One pair per line, split on a tab, a semicolon,
@@ -39,6 +109,7 @@ export function Editor() {
   const { slug } = useParams()
   const navigate = useNavigate()
   const toast = useToast()
+  const { t, tx } = useI18n()
   const editing = Boolean(slug)
 
   const [existing, setExisting] = useState<StudySet | null>(null)
@@ -77,12 +148,16 @@ export function Editor() {
                 a: card.a,
                 b: card.b,
                 note: card.note ?? '',
+                extras: card.extras ?? {},
+                showNote: Boolean(card.note),
+                showGrammar: hasGrammar(card.extras ?? {}),
+                showConj: Boolean(card.extras?.conj),
               }))
             : [newRow(), newRow(), newRow()],
         )
       })
       .catch((caught: unknown) => {
-        toast.error(caught instanceof ApiError ? caught.message : 'Could not load this set.')
+        toast.error(errorText(t, caught, 'editor.loadFailed'))
         navigate('/', { replace: true })
       })
       .finally(() => setLoading(false))
@@ -94,6 +169,25 @@ export function Editor() {
       current.map((row) => (row.key === key ? { ...row, ...patch } : row)),
     )
   }
+
+  /** Every write into the nested `extras` goes through here. */
+  const editExtras = (key: string, mutate: (extras: CardExtras) => CardExtras) => {
+    setRows((current) =>
+      current.map((row) => (row.key === key ? { ...row, extras: mutate(row.extras) } : row)),
+    )
+  }
+
+  const setSideField = (key: string, field: 'article' | 'plural', side: Side, value: string) =>
+    editExtras(key, (extras) => ({ ...extras, [field]: { ...extras[field], [side]: value } }))
+
+  const setGender = (key: string, side: Side, value: string) =>
+    editExtras(key, (extras) => ({
+      ...extras,
+      gender: { ...extras.gender, [side]: value === 'm' || value === 'f' ? value : undefined },
+    }))
+
+  const setConj = (key: string, person: Person, value: string) =>
+    editExtras(key, (extras) => ({ ...extras, conj: { ...extras.conj, [person]: value } }))
 
   const remove = (key: string) => {
     setRows((current) => (current.length <= 1 ? [newRow()] : current.filter((row) => row.key !== key)))
@@ -114,10 +208,11 @@ export function Editor() {
     })
   }
 
+  const parsed = parsePaste(pasteText)
+
   const applyPaste = () => {
-    const parsed = parsePaste(pasteText)
     if (parsed.length === 0) {
-      toast.error('No pairs found. Put one pair per line, separated by a tab or a comma.')
+      toast.error(t('editor.pasteNone'))
       return
     }
     setRows((current) => {
@@ -126,29 +221,33 @@ export function Editor() {
     })
     setPasteText('')
     setPasting(false)
-    toast.success(`Added ${plural(parsed.length, 'card', 'cards')}.`)
+    toast.success(t('editor.pasteAdded', { n: parsed.length }))
   }
 
   const save = async () => {
     const cards = rows
       .filter((row) => row.a.trim() && row.b.trim())
-      .map((row) => ({
-        ...(row.id ? { id: row.id } : {}),
-        a: row.a.trim(),
-        b: row.b.trim(),
-        ...(row.note.trim() ? { note: row.note.trim() } : {}),
-      }))
+      .map((row) => {
+        const extras = prune(row.extras)
+        return {
+          ...(row.id ? { id: row.id } : {}),
+          a: row.a.trim(),
+          b: row.b.trim(),
+          ...(row.note.trim() ? { note: row.note.trim() } : {}),
+          ...(extras ? { extras } : {}),
+        }
+      })
 
     if (!title.trim()) {
-      toast.error('Give the set a title.')
+      toast.error(t('editor.needTitle'))
       return
     }
     if (!langA.trim() || !langB.trim()) {
-      toast.error('Name both sides of the cards.')
+      toast.error(t('editor.needLangs'))
       return
     }
     if (cards.length === 0) {
-      toast.error('Add at least one complete pair.')
+      toast.error(t('editor.needPair'))
       return
     }
 
@@ -165,10 +264,10 @@ export function Editor() {
       const result = existing
         ? await api.updateSet(existing.id, payload)
         : await api.createSet(payload)
-      toast.success(existing ? 'Set updated.' : 'Set created.')
+      toast.success(existing ? t('editor.updated') : t('editor.created'))
       navigate(`/s/${result.slug}`, { replace: true })
     } catch (caught) {
-      toast.error(caught instanceof ApiError ? caught.message : 'Could not save.')
+      toast.error(errorText(t, caught, 'editor.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -180,10 +279,10 @@ export function Editor() {
     }
     try {
       await api.deleteSet(existing.id)
-      toast.success('Set deleted.')
+      toast.success(t('editor.deleted'))
       navigate('/', { replace: true })
     } catch (caught) {
-      toast.error(caught instanceof ApiError ? caught.message : 'Could not delete.')
+      toast.error(errorText(t, caught, 'editor.deleteFailed'))
     }
   }
 
@@ -202,7 +301,7 @@ export function Editor() {
     <Shell>
       <TopBar
         back={existing ? `/s/${existing.slug}` : '/'}
-        title={existing ? 'Edit set' : 'New set'}
+        title={existing ? t('editor.editSet') : t('editor.newSet')}
         actions={
           <button
             type="button"
@@ -211,7 +310,7 @@ export function Editor() {
             disabled={saving}
           >
             {saving ? <span className="spinner" /> : <Icon name="check" />}
-            Save
+            {t('common.save')}
           </button>
         }
       />
@@ -220,28 +319,28 @@ export function Editor() {
         <section className="stack" style={{ '--gap': '0.875rem' } as React.CSSProperties}>
           <div className="field">
             <label className="field__label" htmlFor="title">
-              Title
+              {t('editor.title')}
             </label>
             <input
               id="title"
               className="input"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="Unit 4 — in the kitchen"
+              placeholder={t('editor.titlePlaceholder')}
               maxLength={120}
             />
           </div>
 
           <div className="field">
             <label className="field__label" htmlFor="description">
-              Description <span className="faint">(optional)</span>
+              {t('editor.description')} <span className="faint">{t('editor.optional')}</span>
             </label>
             <input
               id="description"
               className="input"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              placeholder="What this set covers"
+              placeholder={t('editor.descriptionPlaceholder')}
               maxLength={500}
             />
           </div>
@@ -249,28 +348,28 @@ export function Editor() {
           <div className="row" style={{ '--gap': '0.5rem', alignItems: 'flex-end' } as React.CSSProperties}>
             <div className="field grow">
               <label className="field__label" htmlFor="langA">
-                Front side
+                {t('editor.frontSide')}
               </label>
               <input
                 id="langA"
                 className="input"
                 value={langA}
                 onChange={(event) => setLangA(event.target.value)}
-                placeholder="Italian"
+                placeholder="Italiano"
                 maxLength={40}
               />
             </div>
             <Icon name="swap" style={{ color: 'var(--ink-faint)', marginBottom: '0.9rem' }} />
             <div className="field grow">
               <label className="field__label" htmlFor="langB">
-                Back side
+                {t('editor.backSide')}
               </label>
               <input
                 id="langB"
                 className="input"
                 value={langB}
                 onChange={(event) => setLangB(event.target.value)}
-                placeholder="Hungarian"
+                placeholder="Magyar"
                 maxLength={40}
               />
             </div>
@@ -284,72 +383,230 @@ export function Editor() {
             />
             <span className="switch__track" />
             <span className="small">
-              {published ? 'Visible to everyone' : 'Draft — only editors can see it'}
+              {published ? t('editor.visible') : t('editor.draftOnly')}
             </span>
           </label>
         </section>
 
         <section>
           <div className="spread" style={{ marginBottom: '0.6rem' }}>
-            <p className="eyebrow">{plural(complete, 'card', 'cards')}</p>
+            <p className="eyebrow">{t('editor.cards', { n: complete })}</p>
             <button type="button" className="btn btn--sm" onClick={() => setPasting(true)}>
               <Icon name="list" />
-              Paste a list
+              {t('editor.pasteList')}
             </button>
           </div>
 
-          <div className="stack" style={{ '--gap': '0.5rem' } as React.CSSProperties}>
+          <div className="stack" style={{ '--gap': '0.75rem' } as React.CSSProperties}>
             {rows.map((row, index) => (
-              <div key={row.key} className="editrow">
-                <input
-                  className="input"
-                  value={row.a}
-                  onChange={(event) => update(row.key, { a: event.target.value })}
-                  placeholder={langA || 'Front'}
-                  aria-label={`${langA || 'Front'}, card ${index + 1}`}
-                  maxLength={300}
-                />
-                <input
-                  className="input"
-                  value={row.b}
-                  onChange={(event) => update(row.key, { b: event.target.value })}
-                  placeholder={langB || 'Back'}
-                  aria-label={`${langB || 'Back'}, card ${index + 1}`}
-                  maxLength={300}
-                />
-                <div
-                  className="stack"
-                  style={{ '--gap': '0.1rem' } as React.CSSProperties}
-                >
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    style={{ width: '2rem', height: '1.4rem' }}
-                    aria-label="Move up"
-                    onClick={() => move(index, -1)}
-                    disabled={index === 0}
+              <div key={row.key} className="editcard">
+                <div className="editrow">
+                  <input
+                    className="input"
+                    value={row.a}
+                    onChange={(event) => update(row.key, { a: event.target.value })}
+                    placeholder={langA || t('editor.front')}
+                    aria-label={t('editor.sideAria', {
+                      lang: langA || t('editor.front'),
+                      n: index + 1,
+                    })}
+                    maxLength={300}
+                  />
+                  <input
+                    className="input"
+                    value={row.b}
+                    onChange={(event) => update(row.key, { b: event.target.value })}
+                    placeholder={langB || t('editor.back')}
+                    aria-label={t('editor.sideAria', {
+                      lang: langB || t('editor.back'),
+                      n: index + 1,
+                    })}
+                    maxLength={300}
+                  />
+                  <div
+                    className="stack"
+                    style={{ '--gap': '0.1rem' } as React.CSSProperties}
                   >
-                    <Icon name="chevronDown" style={{ transform: 'rotate(180deg)', width: 16, height: 16 }} />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    style={{ width: '2rem', height: '1.4rem' }}
-                    aria-label="Remove card"
-                    onClick={() => remove(row.key)}
-                  >
-                    <Icon name="trash" style={{ width: 15, height: 15 }} />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    style={{ width: '2rem', height: '1.4rem' }}
-                    aria-label="Move down"
-                    onClick={() => move(index, 1)}
-                    disabled={index === rows.length - 1}
-                  >
-                    <Icon name="chevronDown" style={{ width: 16, height: 16 }} />
-                  </button>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ width: '2rem', height: '1.4rem' }}
+                      aria-label={t('editor.moveUp')}
+                      onClick={() => move(index, -1)}
+                      disabled={index === 0}
+                    >
+                      <Icon name="chevronDown" style={{ transform: 'rotate(180deg)', width: 16, height: 16 }} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ width: '2rem', height: '1.4rem' }}
+                      aria-label={t('editor.removeCard')}
+                      onClick={() => remove(row.key)}
+                    >
+                      <Icon name="trash" style={{ width: 15, height: 15 }} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ width: '2rem', height: '1.4rem' }}
+                      aria-label={t('editor.moveDown')}
+                      onClick={() => move(index, 1)}
+                      disabled={index === rows.length - 1}
+                    >
+                      <Icon name="chevronDown" style={{ width: 16, height: 16 }} />
+                    </button>
+                  </div>
+                </div>
+
+                {row.showNote && (
+                  <div className="editcard__note">
+                    <input
+                      className="input"
+                      value={row.note}
+                      onChange={(event) => update(row.key, { note: event.target.value })}
+                      placeholder={t('editor.notePlaceholder')}
+                      aria-label={t('editor.noteAria', { n: index + 1 })}
+                      maxLength={300}
+                      // eslint-disable-next-line jsx-a11y/no-autofocus
+                      autoFocus={row.note === ''}
+                    />
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ width: '2rem', height: '2.5rem' }}
+                      aria-label={t('editor.removeNote')}
+                      onClick={() => update(row.key, { note: '', showNote: false })}
+                    >
+                      <Icon name="x" style={{ width: 15, height: 15 }} />
+                    </button>
+                  </div>
+                )}
+
+                {row.showGrammar && (
+                  <div className="editcard__panel">
+                    {SIDES.map((side) => (
+                      <div className="editcard__grammar" key={side}>
+                        <span className="editcard__side truncate">
+                          {side === 'a' ? langA || t('editor.front') : langB || t('editor.back')}
+                        </span>
+                        <input
+                          className="input"
+                          value={row.extras.article?.[side] ?? ''}
+                          onChange={(event) =>
+                            setSideField(row.key, 'article', side, event.target.value)
+                          }
+                          placeholder={t('word.article')}
+                          aria-label={t('editor.articleFor', {
+                            side: side === 'a' ? langA : langB,
+                          })}
+                          maxLength={80}
+                        />
+                        <input
+                          className="input"
+                          value={row.extras.plural?.[side] ?? ''}
+                          onChange={(event) =>
+                            setSideField(row.key, 'plural', side, event.target.value)
+                          }
+                          placeholder={t('word.plural')}
+                          aria-label={t('editor.pluralFor', {
+                            side: side === 'a' ? langA : langB,
+                          })}
+                          maxLength={160}
+                        />
+                        <select
+                          className="select"
+                          value={row.extras.gender?.[side] ?? ''}
+                          onChange={(event) => setGender(row.key, side, event.target.value)}
+                          aria-label={t('editor.genderFor', {
+                            side: side === 'a' ? langA : langB,
+                          })}
+                        >
+                          <option value="">{t('word.none')}</option>
+                          <option value="m">m — {t('word.masculine')}</option>
+                          <option value="f">f — {t('word.feminine')}</option>
+                        </select>
+                      </div>
+                    ))}
+                    <div className="spread">
+                      <p className="field__hint grow">{t('editor.attributesHint')}</p>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => {
+                          // Drops the grammar but keeps any verb table.
+                          editExtras(row.key, ({ conj }) => (conj ? { conj } : {}))
+                          update(row.key, { showGrammar: false })
+                        }}
+                      >
+                        {t('editor.removeAttributes')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {row.showConj && (
+                  <div className="editcard__panel">
+                    <div className="editcard__conj">
+                      {PERSONS.map((person) => (
+                        <label className="field" key={person}>
+                          <span className="field__label">{person}</span>
+                          <input
+                            className="input"
+                            value={row.extras.conj?.[person] ?? ''}
+                            onChange={(event) => setConj(row.key, person, event.target.value)}
+                            maxLength={160}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="spread">
+                      <p className="field__hint grow">{t('editor.conjugationHint')}</p>
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => {
+                          editExtras(row.key, ({ conj: _conj, ...rest }) => rest)
+                          update(row.key, { showConj: false })
+                        }}
+                      >
+                        {t('editor.removeConjugation')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="editcard__add">
+                  {!row.showNote && (
+                    <button
+                      type="button"
+                      className="chip chip--button"
+                      onClick={() => update(row.key, { showNote: true })}
+                    >
+                      <Icon name="plus" width={11} height={11} />
+                      {t('editor.addNote')}
+                    </button>
+                  )}
+                  {!row.showGrammar && (
+                    <button
+                      type="button"
+                      className="chip chip--button"
+                      onClick={() => update(row.key, { showGrammar: true })}
+                    >
+                      <Icon name="plus" width={11} height={11} />
+                      {t('editor.addAttributes')}
+                    </button>
+                  )}
+                  {!row.showConj && (
+                    <button
+                      type="button"
+                      className="chip chip--button"
+                      onClick={() => update(row.key, { showConj: true })}
+                    >
+                      <Icon name="plus" width={11} height={11} />
+                      {t('editor.addConjugation')}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -358,17 +615,19 @@ export function Editor() {
           <button
             type="button"
             className="btn btn--block"
-            style={{ marginTop: '0.6rem' }}
+            style={{ marginTop: '0.75rem' }}
             onClick={() => setRows((current) => [...current, newRow()])}
           >
             <Icon name="plus" />
-            Add a card
+            {t('editor.addCard')}
           </button>
 
-          <p className="field__hint" style={{ marginTop: '0.75rem' }}>
-            Separate alternative answers with a semicolon, like{' '}
-            <code>ház; épület</code>. Anything in brackets is optional when typing.
-          </p>
+          <div className="stack" style={{ '--gap': '0.4rem', marginTop: '0.75rem' } as React.CSSProperties}>
+            <p className="field__hint">{t('editor.noteHint')}</p>
+            <p className="field__hint">
+              {tx('editor.altHint', { example: <code>ház; épület</code> })}
+            </p>
+          </div>
         </section>
 
         <section className="stack" style={{ '--gap': '0.5rem' } as React.CSSProperties}>
@@ -379,7 +638,7 @@ export function Editor() {
             disabled={saving}
           >
             {saving ? <span className="spinner" /> : <Icon name="check" />}
-            {existing ? 'Save changes' : 'Create set'}
+            {existing ? t('editor.saveChanges') : t('editor.createSet')}
           </button>
           {existing && (
             <button
@@ -388,59 +647,69 @@ export function Editor() {
               onClick={() => setConfirmDelete(true)}
             >
               <Icon name="trash" />
-              Delete this set
+              {t('editor.deleteSet')}
             </button>
           )}
         </section>
       </div>
 
       {pasting && (
-        <Sheet title="Paste a word list" onClose={() => setPasting(false)}>
+        <Sheet
+          title={t('editor.pasteTitle')}
+          onClose={() => setPasting(false)}
+          footer={
+            <>
+              <button type="button" className="btn btn--primary btn--block" onClick={applyPaste}>
+                {parsed.length > 0
+                  ? t('editor.pasteAdd', { n: parsed.length })
+                  : t('editor.pasteAddEmpty')}
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--block"
+                onClick={() => setPasting(false)}
+              >
+                {t('common.cancel')}
+              </button>
+            </>
+          }
+        >
           <p className="muted small" style={{ marginBottom: '0.75rem' }}>
-            One pair per line. Separate the two sides with a tab, a comma, a semicolon or a
-            dash.
+            {t('editor.pasteBody')}
           </p>
           <textarea
             className="input"
             value={pasteText}
             onChange={(event) => setPasteText(event.target.value)}
             placeholder={'la cucina, konyha\nil frigorifero, hűtő\nil coltello, kés'}
-            rows={8}
+            rows={6}
           />
-          <div className="stack" style={{ '--gap': '0.5rem', marginTop: '0.75rem' } as React.CSSProperties}>
-            <button type="button" className="btn btn--primary btn--block" onClick={applyPaste}>
-              Add {parsePaste(pasteText).length > 0 ? plural(parsePaste(pasteText).length, 'card', 'cards') : 'cards'}
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost btn--block"
-              onClick={() => setPasting(false)}
-            >
-              Cancel
-            </button>
-          </div>
         </Sheet>
       )}
 
       {confirmDelete && existing && (
-        <Sheet title="Delete this set?" onClose={() => setConfirmDelete(false)}>
-          <p className="muted small" style={{ marginBottom: '1rem' }}>
-            <strong>{existing.title}</strong> and all of its cards are removed for everyone,
-            along with their progress. This cannot be undone.
+        <Sheet
+          title={t('editor.deleteTitle')}
+          onClose={() => setConfirmDelete(false)}
+          footer={
+            <>
+              <button type="button" className="btn btn--danger btn--block" onClick={destroy}>
+                <Icon name="trash" />
+                {t('editor.deleteConfirm')}
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--block"
+                onClick={() => setConfirmDelete(false)}
+              >
+                {t('common.keep')}
+              </button>
+            </>
+          }
+        >
+          <p className="muted small">
+            {tx('editor.deleteBody', { title: <strong>{existing.title}</strong> })}
           </p>
-          <div className="stack" style={{ '--gap': '0.5rem' } as React.CSSProperties}>
-            <button type="button" className="btn btn--danger btn--block" onClick={destroy}>
-              <Icon name="trash" />
-              Delete permanently
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost btn--block"
-              onClick={() => setConfirmDelete(false)}
-            >
-              Keep it
-            </button>
-          </div>
         </Sheet>
       )}
     </Shell>

@@ -1,5 +1,7 @@
 /** Platform sniffing, used only to show the right install instructions. */
 
+import { useEffect, useState } from 'react'
+
 export type Platform = 'ios' | 'android' | 'desktop'
 export type Browser = 'safari' | 'chrome' | 'firefox' | 'samsung' | 'edge' | 'other'
 
@@ -89,4 +91,32 @@ export const installPrompt = {
     const { outcome } = await prompt.userChoice
     return outcome === 'accepted'
   },
+}
+
+/**
+ * The same question as `isInstalled`, but as a hook that keeps up: a reader
+ * who installs mid-session should see the Install tab disappear without a
+ * reload, and somebody opening the installed app should never see it at all.
+ */
+export function useIsInstalled(): boolean {
+  const [installed, setInstalled] = useState(isInstalled)
+
+  useEffect(() => {
+    const queries = [
+      '(display-mode: standalone)',
+      '(display-mode: fullscreen)',
+      '(display-mode: minimal-ui)',
+    ].map((query) => window.matchMedia(query))
+
+    const onChange = () => setInstalled(isInstalled())
+    queries.forEach((query) => query.addEventListener('change', onChange))
+    window.addEventListener('appinstalled', onChange)
+
+    return () => {
+      queries.forEach((query) => query.removeEventListener('change', onChange))
+      window.removeEventListener('appinstalled', onChange)
+    }
+  }, [])
+
+  return installed
 }

@@ -4,7 +4,10 @@ import { BrowserRouter } from 'react-router-dom'
 import { App } from './App'
 import { AuthProvider } from './lib/auth'
 import { ToastProvider } from './lib/toast'
+import { I18nProvider, applyLang, readLang } from './lib/i18n'
 import { applyTheme, readTheme } from './lib/theme'
+import { startUpdateWatch } from './lib/update'
+import { UpdateBanner } from './components/UpdateBanner'
 
 import './styles/tokens.css'
 import './styles/base.css'
@@ -12,6 +15,7 @@ import './styles/ui.css'
 import './styles/study.css'
 
 applyTheme(readTheme())
+applyLang(readLang())
 
 const container = document.getElementById('root')
 if (!container) {
@@ -21,21 +25,21 @@ if (!container) {
 createRoot(container).render(
   <StrictMode>
     <BrowserRouter>
-      <AuthProvider>
-        <ToastProvider>
-          <App />
-        </ToastProvider>
-      </AuthProvider>
+      <I18nProvider>
+        <AuthProvider>
+          <ToastProvider>
+            <App />
+            <UpdateBanner />
+          </ToastProvider>
+        </AuthProvider>
+      </I18nProvider>
     </BrowserRouter>
   </StrictMode>,
 )
 
-// The service worker makes the installed app open instantly and keeps the
-// library readable without a connection.
+// The service worker makes the installed app open instantly, keeps the library
+// readable without a connection, and is how a new build reaches a phone that
+// was installed months ago.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
-      // An unavailable service worker only costs offline support.
-    })
-  })
+  window.addEventListener('load', startUpdateWatch)
 }

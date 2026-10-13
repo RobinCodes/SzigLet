@@ -63,9 +63,13 @@
   /* Motion. One easing for entrances, one spring-ish for interactions. */
   --ease: cubic-bezier(0.22, 0.68, 0, 1);
   --ease-spring: cubic-bezier(0.34, 1.46, 0.64, 1);
+  /* A card thrown off screen should accelerate away, not ease to a halt. */
+  --ease-exit: cubic-bezier(0.32, 0.72, 0, 1);
   --t-fast: 120ms;
   --t-base: 220ms;
   --t-slow: 420ms;
+  /* Kept in step with EXIT_MS in SwipeDeck.tsx. */
+  --t-swipe: 260ms;
 
   /* Layout. */
   --col: 34rem;

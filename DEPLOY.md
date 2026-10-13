@@ -228,12 +228,51 @@ la sedia, szék
 Alternative answers go after a semicolon (`ház; épület`), and anything in
 brackets is optional when typing (`hűtő (szekrény)`).
 
+## Deploying from GitHub instead
+
+`.github/workflows/deploy.yml` does steps 1 and 2 for you: push to `main` and
+the live site follows. Installed phones pick the new build up the next time
+they are opened — the service worker notices and the app offers a one-tap
+reload — so there is nothing to reinstall.
+
+It uploads over FTPS, because this host has no SSH. Set three secrets under
+*Settings → Secrets and variables → Actions*:
+
+| Secret | Where to find it |
+| --- | --- |
+| `FTP_SERVER` | *cPanel → FTP Accounts*, e.g. `ftp.example.hu` |
+| `FTP_USERNAME` | that account's full username, prefix included |
+| `FTP_PASSWORD` | its password |
+
+Add a repository *variable* `FTP_REMOTE_DIR` only if the document root is not
+`public_html/`. Until the secrets exist the workflow still builds, typechecks
+and lints the PHP on every push and pull request; it just cannot publish.
+
+Two files on the server are never uploaded and never deleted, because the
+build does not know what is in them:
+
+- `api/app/config.php` — the database credentials and the session secret.
+- `public_html/.htaccess` — cPanel's generated PHP handler block.
+
+That second exclusion has a consequence worth understanding. The
+Content-Security-Policy in `.htaccess` pins the sha256 of the one inline
+script in `index.html`, so **if that script changes, the live `.htaccess` has
+to be edited by hand or the site will block its own bootstrap.** The workflow
+refuses to deploy when that happens, prints the new hash, and tells you where
+to paste it. `deploy/csp-hashes.txt` is the committed copy it compares
+against, written by `npm run package`.
+
+After the very first automated run, check in *File Manager* that
+`api/.htaccess` and `api/app/.htaccess` are still there. The second one is
+what stops `config.php` from being served.
+
 ## Keeping it running
 
-- **Updates.** Rebuild, repackage, upload `deploy/Upload.zip` over the top.
-  Two files must survive: `api/app/config.php`, which the packaging step
-  deliberately leaves out, and `public_html/.htaccess`, which carries cPanel's
-  PHP handler block that the build does not have.
+- **Updates.** Push to `main` and let the workflow above do it. By hand:
+  rebuild, repackage, upload `deploy/Upload.zip` over the top. Two files must
+  survive: `api/app/config.php`, which the packaging step deliberately leaves
+  out, and `public_html/.htaccess`, which carries cPanel's PHP handler block
+  that the build does not have.
 - **Backups.** Automated. `deploy/sziglet-backup.php` sits in the home
   directory, outside `public_html`, and a cron entry runs it every Monday at
   03:17. Each run writes `~/backups/sziglet-DATE.sql.gz` and a dated copy of
@@ -249,6 +288,9 @@ brackets is optional when typing (`hűtő (szekrény)`).
   `config.php` is included because the `secret` in it signs every session —
   restoring the database without it logs everyone out.
 - **Schema changes.** They apply themselves on the first request after upload.
+  This release adds one: an `extras` column on `sl_cards`, holding the article,
+  plural, gender and verb forms a card may carry. Existing cards are untouched
+  and the column starts empty, so nothing needs migrating by hand.
 - **Closing registration.** Set `'registration_open' => false` in `config.php`
   once everyone has an account. Existing people keep signing in.
 - **Turning the bot defence up.** If anything ever does get through, raise

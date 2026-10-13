@@ -1,17 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ApiError, api, outbox } from '../lib/api'
+import { api, outbox } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { useI18n } from '../lib/i18n'
+import { errorText } from '../lib/errors'
 import { fold } from '../lib/text'
-import { greeting, plural } from '../lib/format'
 import type { SetSummary } from '../lib/types'
+import { mastery, masteryPercent } from '../lib/word'
 import { Shell } from '../components/Shell'
-import { Empty, Ring, SkeletonList } from '../components/Bits'
+import { DualRing, Empty, SkeletonList } from '../components/Bits'
 import { Icon } from '../components/Icon'
-import { isInstalled } from '../lib/platform'
+import { useIsInstalled } from '../lib/platform'
 
 export function Library() {
   const { user, canEdit } = useAuth()
+  const { t, greeting } = useI18n()
+  const installed = useIsInstalled()
+
   const [sets, setSets] = useState<SetSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -29,7 +34,7 @@ export function Library() {
       })
       .catch((caught: unknown) => {
         if (!cancelled) {
-          setError(caught instanceof ApiError ? caught.message : 'Could not load the library.')
+          setError(errorText(t, caught, 'library.loadFailed'))
           setSets([])
         }
       })
@@ -37,6 +42,9 @@ export function Library() {
     return () => {
       cancelled = true
     }
+    // The translator is stable per language; reloading the library on a
+    // language change would be pointless.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const visible = useMemo(() => {
@@ -68,9 +76,7 @@ export function Library() {
           style={{ marginBottom: '0.75rem', borderColor: 'var(--rehearse)', padding: '0.7rem 0.875rem' }}
         >
           <Icon name="cloudOff" style={{ color: 'var(--rehearse)', flex: 'none' }} />
-          <span className="small grow">
-            {plural(pending, 'change', 'changes')} saved on this device, waiting for a connection.
-          </span>
+          <span className="small grow">{t('library.pending', { n: pending })}</span>
         </div>
       )}
 
@@ -92,7 +98,7 @@ export function Library() {
             <input
               className="input"
               style={{ paddingLeft: '2.4rem' }}
-              placeholder="Search sets"
+              placeholder={t('library.search')}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               type="search"
@@ -104,12 +110,12 @@ export function Library() {
 
       <div className="spread" style={{ marginBottom: '0.6rem' }}>
         <p className="eyebrow">
-          {sets === null ? 'Library' : plural(sets.length, 'set', 'sets')}
+          {sets === null ? t('nav.library') : t('library.sets', { n: sets.length })}
         </p>
         {canEdit && (
           <Link to="/new" className="btn btn--sm">
             <Icon name="plus" />
-            New set
+            {t('library.newSet')}
           </Link>
         )}
       </div>
@@ -117,29 +123,30 @@ export function Library() {
       {sets === null && <SkeletonList rows={4} />}
 
       {error && sets?.length === 0 && (
-        <Empty icon="cloudOff" title="Could not load the library">
+        <Empty icon="cloudOff" title={t('library.loadFailedTitle')}>
           {error}
         </Empty>
       )}
 
       {sets !== null && sets.length === 0 && !error && (
-        <Empty icon="book" title="The library is empty">
-          {canEdit
-            ? 'Add the first set and everybody will see it here.'
-            : 'Nothing has been added yet. Check back soon.'}
+        <Empty icon="book" title={t('library.emptyTitle')}>
+          {canEdit ? t('library.emptyEditor') : t('library.emptyViewer')}
         </Empty>
       )}
 
       {sets !== null && sets.length > 0 && visible.length === 0 && (
-        <Empty icon="search" title="No match">
-          Nothing matches “{query}”.
+        <Empty icon="search" title={t('library.noMatchTitle')}>
+          {t('library.noMatch', { query })}
         </Empty>
       )}
 
       <ul className="setlist">
         {visible.map((set, index) => {
-          const mastered = set.known.ab + set.known.ba
-          const possible = set.cardCount * 2
+          // Two measures rather than one average: a set can be solid one way
+          // round and barely started the other, and that is the thing worth
+          // knowing before tapping into it.
+          const ab = masteryPercent(set.known.ab, set.cardCount, set.tests?.ab)
+          const ba = masteryPercent(set.known.ba, set.cardCount, set.tests?.ba)
           return (
             <li key={set.id}>
               <Link
@@ -147,15 +154,23 @@ export function Library() {
                 className="setcard"
                 style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
               >
-                <Ring
-                  value={mastered}
-                  total={possible}
-                  tone={mastered === possible && possible > 0 ? 'known' : 'accent'}
+                <DualRing
+                  outer={mastery(set.known.ab, set.cardCount, set.tests?.ab)}
+                  inner={mastery(set.known.ba, set.cardCount, set.tests?.ba)}
+                  label={`${t('mastery.ariaRing', {
+                    from: set.langA,
+                    to: set.langB,
+                    percent: ab,
+                  })}. ${t('mastery.ariaRing', {
+                    from: set.langB,
+                    to: set.langA,
+                    percent: ba,
+                  })}`}
                 />
                 <div className="setcard__body">
                   <div className="row" style={{ '--gap': '0.4rem' } as React.CSSProperties}>
                     <span className="setcard__title truncate">{set.title}</span>
-                    {!set.published && <span className="chip">Draft</span>}
+                    {!set.published && <span className="chip">{t('common.draft')}</span>}
                   </div>
                   <div className="setcard__meta">
                     <span className="setcard__pair">
@@ -164,8 +179,20 @@ export function Library() {
                       {set.langB}
                     </span>
                     <span>·</span>
-                    <span>{plural(set.cardCount, 'card', 'cards')}</span>
+                    <span>{t('set.cards', { n: set.cardCount })}</span>
                   </div>
+                  {ab + ba > 0 && (
+                    <div className="setcard__scores">
+                      <span className="truncate">
+                        {set.langA} <Icon name="arrowRight" /> {set.langB}
+                        <strong>{ab}%</strong>
+                      </span>
+                      <span className="truncate">
+                        {set.langB} <Icon name="arrowRight" /> {set.langA}
+                        <strong>{ba}%</strong>
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <Icon name="chevronRight" style={{ color: 'var(--ink-faint)', flex: 'none' }} />
               </Link>
@@ -174,7 +201,7 @@ export function Library() {
         })}
       </ul>
 
-      {!isInstalled() && sets !== null && sets.length > 0 && (
+      {!installed && sets !== null && sets.length > 0 && (
         <Link
           to="/install"
           className="panel row"
@@ -182,9 +209,9 @@ export function Library() {
         >
           <Icon name="install" style={{ color: 'var(--accent)', flex: 'none' }} />
           <span className="small grow">
-            <strong style={{ fontWeight: 620 }}>Install SzigLet</strong>
+            <strong style={{ fontWeight: 620 }}>{t('library.installTitle')}</strong>
             <br />
-            <span className="faint">Opens like an app, works offline.</span>
+            <span className="faint">{t('library.installBody')}</span>
           </span>
           <Icon name="chevronRight" style={{ color: 'var(--ink-faint)', flex: 'none' }} />
         </Link>

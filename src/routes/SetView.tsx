@@ -1,10 +1,22 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ApiError, api } from '../lib/api'
+import { api } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useToast } from '../lib/toast'
+import { useI18n } from '../lib/i18n'
+import { errorText } from '../lib/errors'
 import { countStates, isDeckCleared, MIN_CHOICE_CARDS } from '../lib/study'
-import { plural, relativeTime } from '../lib/format'
+import { readShow, storeShow, toggle } from '../lib/display'
+import {
+  ATTRIBUTES,
+  MASTERY,
+  NO_TESTS,
+  anyHas,
+  answerKey,
+  masteryPercent,
+  promptKey,
+  type Attribute,
+} from '../lib/word'
 import type { Direction, StudySet } from '../lib/types'
 import { Shell, TopBar } from '../components/Shell'
 import { Empty, Segmented, SplitBar, Spinner } from '../components/Bits'
@@ -30,17 +42,56 @@ export function storeDirection(slug: string, dir: Direction): void {
   }
 }
 
+/** One line of the mastery breakdown: what it is worth, and whether it is in. */
+function MasteryRow({
+  label,
+  detail,
+  weight,
+  done,
+}: {
+  label: string
+  detail: string
+  weight: number
+  done: boolean
+}) {
+  return (
+    <div className="cardrow" style={{ alignItems: 'center' }}>
+      <Icon
+        name={done ? 'check' : 'clock'}
+        style={{ color: done ? 'var(--known)' : 'var(--ink-faint)', flex: 'none' }}
+        width={17}
+        height={17}
+      />
+      <span className="grow truncate" style={{ fontWeight: 560 }}>
+        {label}
+      </span>
+      <span className="tiny faint num">{detail}</span>
+      <span className={`chip${done ? ' chip--known' : ''}`} style={{ minWidth: '2.6rem', justifyContent: 'center' }}>
+        {Math.round(weight * 100)}%
+      </span>
+    </div>
+  )
+}
+
 export function SetView() {
   const { slug = '' } = useParams()
   const navigate = useNavigate()
   const toast = useToast()
   const { canEdit } = useAuth()
+  const { t, relative } = useI18n()
 
   const [set, setSet] = useState<StudySet | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dir, setDir] = useState<Direction>(() => readDirection(slug))
   const [confirmReset, setConfirmReset] = useState(false)
   const [showAll, setShowAll] = useState(false)
+  const [show, setShow] = useState(() => readShow(slug))
+
+  const flip = (attribute: Attribute) => {
+    const next = toggle(show, attribute)
+    setShow(next)
+    storeShow(slug, next)
+  }
 
   const load = useCallback(() => {
     api
@@ -50,8 +101,9 @@ export function SetView() {
         setError(null)
       })
       .catch((caught: unknown) => {
-        setError(caught instanceof ApiError ? caught.message : 'Could not load this set.')
+        setError(errorText(t, caught, 'set.loadFailed'))
       })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug])
 
   useEffect(load, [load])
@@ -65,7 +117,7 @@ export function SetView() {
     return (
       <Shell>
         <TopBar back="/" />
-        <Empty icon="search" title="Set not found">
+        <Empty icon="search" title={t('set.notFoundTitle')}>
           {error}
         </Empty>
       </Shell>
@@ -87,14 +139,25 @@ export function SetView() {
   const fromLabel = dir === 'ab' ? set.langA : set.langB
   const toLabel = dir === 'ab' ? set.langB : set.langA
 
+  const tests = set.tests?.[dir] ?? NO_TESTS
+  const score = masteryPercent(tally.known, total, tests)
+
+  // Only offer a switch for grammar some card in this set actually carries;
+  // three dead toggles on a set of plain nouns is just noise.
+  const available = ATTRIBUTES.filter(
+    (attribute) =>
+      anyHas(set.cards, promptKey(dir), attribute) ||
+      anyHas(set.cards, answerKey(dir), attribute),
+  )
+
   const reset = async () => {
     try {
       await api.resetProgress(set.id, 'both')
       setConfirmReset(false)
-      toast.success('Progress cleared.')
+      toast.success(t('set.resetDone'))
       load()
     } catch (caught) {
-      toast.error(caught instanceof ApiError ? caught.message : 'Could not reset.')
+      toast.error(errorText(t, caught, 'set.resetFailed'))
     }
   }
 
@@ -104,7 +167,7 @@ export function SetView() {
         back="/"
         actions={
           canEdit ? (
-            <Link to={`/s/${set.slug}/edit`} className="icon-btn" aria-label="Edit this set">
+            <Link to={`/s/${set.slug}/edit`} className="icon-btn" aria-label={t('set.edit')}>
               <Icon name="edit" />
             </Link>
           ) : undefined
@@ -116,26 +179,27 @@ export function SetView() {
           <span className="chip chip--accent">
             {set.langA} <Icon name="swap" width={11} height={11} /> {set.langB}
           </span>
-          {!set.published && <span className="chip">Draft</span>}
+          {!set.published && <span className="chip">{t('common.draft')}</span>}
         </div>
         <h1 className="sethead__title">{set.title}</h1>
         {set.description && <p className="sethead__desc">{set.description}</p>}
         <p className="tiny faint" style={{ marginTop: '0.5rem' }}>
-          {plural(total, 'card', 'cards')}
-          {set.author && ` · by ${set.author}`} · updated {relativeTime(set.updatedAt)}
+          {t('set.cards', { n: total })}
+          {set.author && ` · ${t('set.by', { author: set.author })}`} ·{' '}
+          {t('set.updated', { when: relative(set.updatedAt) })}
         </p>
       </div>
 
       {total === 0 ? (
-        <Empty icon="cards" title="No cards yet">
-          {canEdit ? 'Add some cards to get started.' : 'This set is still empty.'}
+        <Empty icon="cards" title={t('set.noCardsTitle')}>
+          {canEdit ? t('set.noCardsEditor') : t('set.noCardsViewer')}
         </Empty>
       ) : (
         <div className="stack" style={{ '--gap': '1.25rem' } as React.CSSProperties}>
           <section className="stack" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
-            <p className="eyebrow">Which way round?</p>
+            <p className="eyebrow">{t('set.whichWay')}</p>
             <Segmented
-              label="Study direction"
+              label={t('set.directionLabel')}
               value={dir}
               onChange={changeDirection}
               options={[
@@ -144,8 +208,63 @@ export function SetView() {
               ]}
             />
             <p className="tiny faint">
-              You will see the {fromLabel} side and recall the {toLabel} one. Each direction
-              is tracked separately.
+              {t('set.directionHint', { from: fromLabel, to: toLabel })}
+            </p>
+          </section>
+
+          {available.length > 0 && (
+            <section className="stack" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
+              <p className="eyebrow">{t('word.showTitle')}</p>
+              <div className="togglerow">
+                {available.map((attribute) => (
+                  <button
+                    key={attribute}
+                    type="button"
+                    className={`chip chip--button${show[attribute] ? ' chip--accent' : ''}`}
+                    aria-pressed={show[attribute]}
+                    onClick={() => flip(attribute)}
+                  >
+                    <Icon name={show[attribute] ? 'check' : 'plus'} width={12} height={12} />
+                    {t(`word.${attribute}`)}
+                  </button>
+                ))}
+              </div>
+              <p className="tiny faint">{t('word.showHint')}</p>
+            </section>
+          )}
+
+          {/*
+            Mastery, broken out rather than rolled into one number. Swiping a
+            deck clear and writing it out from memory are different things, and
+            a single percentage hid which of them was still missing.
+          */}
+          <section className="stack" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
+            <div className="spread">
+              <p className="eyebrow">{t('mastery.title')}</p>
+              <span className="chip chip--accent">{score}%</span>
+            </div>
+            <div className="panel panel--flush">
+              <MasteryRow
+                label={t('mastery.swiped')}
+                detail={`${tally.known}/${total}`}
+                weight={MASTERY.swiped}
+                done={total > 0 && tally.known === total}
+              />
+              <MasteryRow
+                label={t('mastery.choice')}
+                detail={tests.choice || tests.write ? t('mastery.done') : t('mastery.todo')}
+                weight={MASTERY.choice}
+                done={tests.choice || tests.write}
+              />
+              <MasteryRow
+                label={t('mastery.written')}
+                detail={tests.write ? t('mastery.done') : t('mastery.todo')}
+                weight={MASTERY.written}
+                done={tests.write}
+              />
+            </div>
+            <p className="tiny faint">
+              {t('mastery.writtenCovers')} {t('mastery.perDirection')}
             </p>
           </section>
 
@@ -156,17 +275,17 @@ export function SetView() {
                 <div className="stat__value" style={{ color: 'var(--known)' }}>
                   {tally.known}
                 </div>
-                <div className="stat__label">Known</div>
+                <div className="stat__label">{t('set.known')}</div>
               </div>
               <div className="stat">
                 <div className="stat__value" style={{ color: 'var(--rehearse)' }}>
                   {tally.rehearse}
                 </div>
-                <div className="stat__label">Rehearsing</div>
+                <div className="stat__label">{t('set.rehearsing')}</div>
               </div>
               <div className="stat">
                 <div className="stat__value">{tally.new}</div>
-                <div className="stat__label">Untouched</div>
+                <div className="stat__label">{t('set.untouched')}</div>
               </div>
             </div>
           </section>
@@ -178,7 +297,11 @@ export function SetView() {
               onClick={() => navigate(`/s/${set.slug}/cards?dir=${dir}`)}
             >
               <Icon name="cards" />
-              {cleared ? 'Review the flashcards' : tally.known > 0 ? 'Continue flashcards' : 'Start flashcards'}
+              {cleared
+                ? t('set.reviewFlashcards')
+                : tally.known > 0
+                  ? t('set.continueFlashcards')
+                  : t('set.startFlashcards')}
             </button>
 
             {cleared ? (
@@ -188,15 +311,14 @@ export function SetView() {
                 onClick={() => navigate(`/s/${set.slug}/test?dir=${dir}`)}
               >
                 <Icon name="trophy" />
-                Take a test
+                {t('set.takeTest')}
               </button>
             ) : (
               <div className="panel stack" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
                 <div className="row" style={{ '--gap': '0.5rem' } as React.CSSProperties}>
                   <Icon name="lock" style={{ color: 'var(--ink-faint)', flex: 'none' }} />
                   <span className="small grow">
-                    Tests unlock once every card is swiped to <strong>Known</strong> in this
-                    direction — {plural(total - tally.known, 'card', 'cards')} to go.
+                    {t('set.locked', { n: total - tally.known })}
                   </span>
                 </div>
                 <button
@@ -204,37 +326,37 @@ export function SetView() {
                   className="btn btn--ghost btn--sm"
                   onClick={() => navigate(`/s/${set.slug}/test?dir=${dir}`)}
                 >
-                  I already know these — test me anyway
+                  {t('set.testAnyway')}
                 </button>
               </div>
             )}
 
             {total < MIN_CHOICE_CARDS && (
-              <p className="tiny faint center">
-                Multiple choice needs at least {MIN_CHOICE_CARDS} cards; this set will use
-                written answers.
-              </p>
+              <p className="tiny faint center">{t('set.minChoice', { n: MIN_CHOICE_CARDS })}</p>
             )}
           </section>
 
           <section>
             <div className="spread" style={{ marginBottom: '0.5rem' }}>
-              <p className="eyebrow">All cards</p>
+              <p className="eyebrow">{t('set.allCards')}</p>
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"
                 onClick={() => setConfirmReset(true)}
               >
                 <Icon name="rotate" />
-                Reset progress
+                {t('set.resetProgress')}
               </button>
             </div>
             <div className="panel panel--flush">
               {(showAll ? set.cards : set.cards.slice(0, 12)).map((card) => (
-                <div className="cardrow" key={card.id}>
-                  <span className={`cardrow__dot cardrow__dot--${card.state[dir]}`} />
-                  <span className="cardrow__a truncate">{dir === 'ab' ? card.a : card.b}</span>
-                  <span className="cardrow__b truncate">{dir === 'ab' ? card.b : card.a}</span>
+                <div className="cardlist__item" key={card.id}>
+                  <div className="cardlist__row">
+                    <span className={`cardrow__dot cardrow__dot--${card.state[dir]}`} />
+                    <span className="cardrow__a truncate">{dir === 'ab' ? card.a : card.b}</span>
+                    <span className="cardrow__b truncate">{dir === 'ab' ? card.b : card.a}</span>
+                  </div>
+                  {card.note && <p className="cardlist__note">{card.note}</p>}
                 </div>
               ))}
             </div>
@@ -245,7 +367,7 @@ export function SetView() {
                 style={{ marginTop: '0.4rem' }}
                 onClick={() => setShowAll(true)}
               >
-                Show all {set.cards.length}
+                {t('set.showAll', { n: set.cards.length })}
                 <Icon name="chevronDown" />
               </button>
             )}
@@ -254,24 +376,26 @@ export function SetView() {
       )}
 
       {confirmReset && (
-        <Sheet title="Reset your progress?" onClose={() => setConfirmReset(false)}>
-          <p className="muted small" style={{ marginBottom: '1rem' }}>
-            Every card in <strong>{set.title}</strong> goes back to untouched, in both
-            directions. This only affects you — the set itself is unchanged.
-          </p>
-          <div className="stack" style={{ '--gap': '0.5rem' } as React.CSSProperties}>
-            <button type="button" className="btn btn--danger btn--block" onClick={reset}>
-              <Icon name="rotate" />
-              Reset my progress
-            </button>
-            <button
-              type="button"
-              className="btn btn--ghost btn--block"
-              onClick={() => setConfirmReset(false)}
-            >
-              Keep it
-            </button>
-          </div>
+        <Sheet
+          title={t('set.resetTitle')}
+          onClose={() => setConfirmReset(false)}
+          footer={
+            <>
+              <button type="button" className="btn btn--danger btn--block" onClick={reset}>
+                <Icon name="rotate" />
+                {t('set.resetConfirm')}
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--block"
+                onClick={() => setConfirmReset(false)}
+              >
+                {t('common.keep')}
+              </button>
+            </>
+          }
+        >
+          <p className="muted small">{t('set.resetBody', { title: set.title })}</p>
         </Sheet>
       )}
     </Shell>

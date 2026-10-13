@@ -7,6 +7,34 @@ export type CardState = 'new' | 'rehearse' | 'known'
 
 export type TestMode = 'choice' | 'write'
 
+/** Which half of a card a piece of grammar belongs to. */
+export type Side = 'a' | 'b'
+
+export type Gender = 'm' | 'f'
+
+/** The six persons of an Italian present tense, in the order they are taught. */
+export const PERSONS = ['io', 'tu', 'lui', 'noi', 'voi', 'loro'] as const
+export type Person = (typeof PERSONS)[number]
+
+/**
+ * The grammar hanging off a word, beyond the two sides themselves.
+ *
+ * Stored as JSON in one column rather than a column per feature: these are
+ * sparse (most cards have none of them), and the set of them is going to keep
+ * growing. Every field is per side, because the app cannot know which side is
+ * the Italian one -- `langA` and `langB` are free text an editor typed.
+ */
+export type CardExtras = {
+  /** "il", "la" — shown in front of the word. */
+  article?: Partial<Record<Side, string>>
+  /** The plural form, shown on a second line. */
+  plural?: Partial<Record<Side, string>>
+  /** Shown as (m) or (f) after the word. */
+  gender?: Partial<Record<Side, Gender>>
+  /** A verb's six present-tense forms. */
+  conj?: Partial<Record<Person, string>>
+}
+
 export type User = {
   id: number
   username: string
@@ -19,6 +47,7 @@ export type Card = {
   a: string
   b: string
   note: string | null
+  extras: CardExtras
   state: Record<Direction, CardState>
 }
 
@@ -34,7 +63,12 @@ export type SetSummary = {
   cardCount: number
   updatedAt: number
   known: Record<Direction, number>
+  /** Which tests have been completed, per direction. Feeds the mastery score. */
+  tests: Record<Direction, TestsDone>
 }
+
+/** A test only ends once every card is right, so finishing one is the signal. */
+export type TestsDone = { choice: boolean; write: boolean }
 
 export type StudySet = {
   id: number
@@ -46,6 +80,7 @@ export type StudySet = {
   published: boolean
   author: string | null
   updatedAt: number
+  tests: Record<Direction, TestsDone>
   cards: Card[]
 }
 
@@ -66,13 +101,20 @@ export type RunResult = {
 }
 
 export type Stats = {
+  /** Tests taken. Flashcard rounds are counted in `sessions` instead. */
   runs: number
+  /** Every study run, flashcards included — what `studyMs` is measured over. */
+  sessions: number
   answered: number
   correct: number
   studyMs: number
   known: number
   rehearse: number
+  /** Consecutive days with a run. Kept as a detail, not the headline. */
   streak: number
+  /** Consecutive weeks with a run — the figure the Progress screen leads with. */
+  weekStreak: number
+  activeDays30: number
   recent: {
     at: number
     mode: string

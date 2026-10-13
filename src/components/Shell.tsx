@@ -1,25 +1,31 @@
 import type { ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
+import { useI18n } from '../lib/i18n'
+import { useIsInstalled } from '../lib/platform'
 import { Icon, type IconName } from './Icon'
 
 type TabDefinition = { to: string; label: string; icon: IconName }
 
-const TABS: TabDefinition[] = [
-  { to: '/', label: 'Library', icon: 'library' },
-  { to: '/progress', label: 'Progress', icon: 'chart' },
-  { to: '/install', label: 'Install', icon: 'install' },
-  { to: '/account', label: 'Account', icon: 'user' },
-]
-
 export function TabBar() {
   const { isOwner } = useAuth()
-  const tabs = isOwner
-    ? [...TABS.slice(0, 3), { to: '/admin', label: 'Admin', icon: 'shield' as IconName }, TABS[3]!]
-    : TABS
+  const { t } = useI18n()
+  const installed = useIsInstalled()
+
+  // Install earns a tab only until it has been done. Afterwards the guide is
+  // still reachable from Account, where it belongs once it is a one-off.
+  const tabs: TabDefinition[] = [
+    { to: '/', label: t('nav.library'), icon: 'library' },
+    { to: '/progress', label: t('nav.progress'), icon: 'chart' },
+    ...(installed
+      ? []
+      : [{ to: '/install', label: t('nav.install'), icon: 'install' as IconName }]),
+    ...(isOwner ? [{ to: '/admin', label: t('nav.admin'), icon: 'shield' as IconName }] : []),
+    { to: '/account', label: t('nav.account'), icon: 'user' },
+  ]
 
   return (
-    <nav className="tabbar" aria-label="Main">
+    <nav className="tabbar" aria-label={t('nav.main')}>
       {tabs.map((tab) => (
         <NavLink key={tab.to} to={tab.to} className="tab" end={tab.to === '/'}>
           <Icon name={tab.icon} />
@@ -38,6 +44,7 @@ type TopBarProps = {
 
 export function TopBar({ title, back, actions }: TopBarProps) {
   const navigate = useNavigate()
+  const { t } = useI18n()
 
   return (
     <header className="topbar">
@@ -45,7 +52,7 @@ export function TopBar({ title, back, actions }: TopBarProps) {
         <button
           type="button"
           className="icon-btn"
-          aria-label="Back"
+          aria-label={t('common.back')}
           onClick={() => (typeof back === 'function' ? back() : navigate(back))}
         >
           <Icon name="chevronLeft" />

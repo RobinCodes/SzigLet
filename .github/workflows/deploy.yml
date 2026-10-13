@@ -1,0 +1,122 @@
+name: Build and deploy
+
+# Auto-update from GitHub: a push to main becomes the live site, and every
+# installed SzigLet picks the new build up the next time it is opened (the
+# service worker notices, and the app offers a one-tap reload).
+#
+# This needs three secrets before it will do anything useful. Set them under
+# Settings → Secrets and variables → Actions → Secrets:
+#
+#   FTP_SERVER     the host from cPanel → FTP Accounts, e.g. ftp.example.hu
+#   FTP_USERNAME   that FTP account's full username
+#   FTP_PASSWORD   its password
+#
+# and optionally a *variable* (not a secret) FTP_REMOTE_DIR if the document
+# root is not `public_html/`. FTPS is used, which cPanel hosts support; SSH is
+# deliberately not required, because Rackhost does not offer it.
+#
+# Two files on the server are never touched, because the build does not know
+# what is in them:
+#
+#   api/app/config.php     the database credentials and the session secret
+#   .htaccess              cPanel's generated PHP handler block lives in here
+#
+# .htaccess being off limits is why the job checks deploy/csp-hashes.txt: the
+# Content Security Policy pins the sha256 of index.html's inline bootstrap
+# script, so if that script ever changes, the live .htaccess has to be edited
+# by hand. Failing the build is the only safe answer — deploying anyway would
+# leave the site blocking its own script.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Assemble the upload
+        run: npm run package
+
+      - name: Lint the PHP that goes with it
+        run: |
+          shopt -s globstar
+          for file in deploy/build/api/**/*.php; do php -l "$file"; done
+
+      - name: Check the Content Security Policy still matches the server
+        run: |
+          if ! git diff --quiet -- deploy/csp-hashes.txt; then
+            echo "::error::index.html's inline script changed, so the CSP hash moved."
+            echo
+            echo "The live public_html/.htaccess pins the old hash and would block"
+            echo "the new bootstrap script. Before this can deploy:"
+            echo
+            echo "  1. Run 'npm run package' locally and commit deploy/csp-hashes.txt."
+            echo "  2. In cPanel, edit public_html/.htaccess and replace the sha256"
+            echo "     in the Content-Security-Policy line with:"
+            echo
+            sed 's/^/       /' deploy/csp-hashes.txt
+            echo
+            echo "     Leave the cPanel-generated PHP handler block alone."
+            exit 1
+          fi
+          echo "CSP hash unchanged; .htaccess on the server is still correct."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sziglet-build
+          path: deploy/build
+          retention-days: 7
+
+      # Only the real repository deploys, and only from main. A pull request
+      # gets the build, the PHP lint and the CSP check above, which is the
+      # point of running it there.
+      - name: Publish to the host
+        if: |
+          github.event_name != 'pull_request'
+            && github.ref == 'refs/heads/main'
+            && github.repository == 'RobinCodes/SzigLet'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          local-dir: ./deploy/build/
+          server-dir: ${{ vars.FTP_REMOTE_DIR || 'public_html/' }}
+          # Excluded means never uploaded and never deleted. The patterns
+          # without a `**/` prefix are anchored to local-dir, so `.htaccess`
+          # here is only the document-root one: `api/.htaccess` and
+          # `api/app/.htaccess` must and do still deploy, and the second of
+          # those is what keeps config.php from being served. Worth confirming
+          # both are present on the server after the first automated run.
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            .htaccess
+            api/app/config.php
+            UPLOAD-ME.txt

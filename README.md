@@ -16,19 +16,78 @@ Two study modes, in the order the app enforces them:
 Progress is stored per account **and per direction**, because knowing
 *la cucina → konyha* is not the same as knowing *konyha → la cucina*.
 
+A card can carry a **note** — the context a single word cannot hold. *il
+gesso* is *kréta* in a classroom and *gipsz* everywhere else, and that is
+worth saying on the back of the card rather than in a third set. Notes show
+when a card is flipped, when a test reveals the answer, and in the set's card
+list.
+
+It can also carry **grammar**: an article, a plural and a gender, per side.
+Each of the three is a switch on the set, so a round can put *il* in front of
+every noun, or add *(m)* after it, or show the plural on a second line —
+without that becoming a second set of cards. Anything switched off is still
+one tap away on the back of the card, so you can check the gender of one
+awkward noun without turning gender on for everything.
+
+A verb can carry its **six present-tense forms**, shown as six little cards you
+flip one at a time — a table you can test yourself against rather than just
+read.
+
+**Mastery is scored per direction**, out of a hundred: half for swiping every
+card to known, a quarter for the multiple choice test, a quarter for the
+written one. Writing a set out subsumes multiple choice, so a written pass is
+worth the whole test half on its own. Italian→Hungarian and Hungarian→Italian
+are scored separately, because being able to read a word and being able to
+produce it are different skills and one average hid which was missing.
+
+The interface speaks **Italian by default, with Hungarian and English** under
+*Account → Language*. Cards are never translated; they are whatever the
+editors typed.
+
 ## What is in here
 
 ```
 src/            the front end — React + TypeScript, no UI framework
   lib/          api client, proof-of-work solver, study engine, grading
+  lib/word.ts   reading a card's grammar, and scoring a set
+  lib/i18n/     one dictionary per language; Italian is the source of truth
   components/   shell, swipe deck, small primitives
   routes/       one file per screen
 server/         the API — PHP 8.1+, one front controller, no dependencies
   app/          database, auth, bot defence, sets, progress, admin
 public/         manifest, service worker, icons
 deploy/         the .htaccess for the document root
-scripts/        packaging for cPanel
+scripts/        packaging for cPanel, service-worker manifest
+.github/        build, lint and FTPS deploy on push to main
 ```
+
+`lib/i18n/it.ts` is typed as the shape every other dictionary must match, so a
+missing or misspelled key is a build error rather than a raw key on screen.
+
+A card's grammar lives in one `extras` JSON column rather than a column per
+feature: it is sparse, almost no card has all of it, and the list is going to
+keep growing. Every field is stored per side, because the app cannot know
+which side is the Italian one — `langA` and `langB` are free text an editor
+typed.
+
+## Marking an answer
+
+Answers are compared with the accents folded away and the punctuation trimmed,
+so a missing accent is a nudge rather than a mistake. Two separators let one
+card accept more than one spelling:
+
+| On the card | Also accepted |
+| --- | --- |
+| `ház; épület` | either word |
+| `vi/vu` | `vi`, `vu`, or both as written — spaces around the slash are ignored |
+| `ház (épület)` | with or without the bracketed part |
+
+If the card has an article, the article-led form counts too: nobody who has
+been shown *il gesso* all round should be marked wrong for typing it back.
+
+A near miss is forgiven **once** per card, and the nudge comes with a way out.
+Collecting the same nudge forever, with nothing on screen offering to just show
+you the answer, was a trap rather than a kindness.
 
 ## Running it locally
 
@@ -48,8 +107,31 @@ becomes the owner.
 
 ## Deploying
 
-See [DEPLOY.md](DEPLOY.md). In short: `npm run build && npm run package`, then
-upload everything inside `deploy/build/` to `public_html`.
+Push to `main`: the GitHub workflow builds and uploads over FTPS, and installed
+phones offer a one-tap reload the next time they are opened. By hand it is
+`npm run build && npm run package`, then everything inside `deploy/build/`
+goes to `public_html`.
+
+Either way, see [DEPLOY.md](DEPLOY.md) — in particular the two files on the
+server that a deploy must never overwrite, and what to do when the
+Content-Security-Policy hash moves.
+
+## Working offline
+
+The service worker precaches the whole build, not just the HTML, because it is
+registered on `load` and is otherwise too late to catch the JavaScript that
+drew the page. `scripts/sw-manifest.mjs` writes that file list, and a hash of
+the build, into `dist/sw.js` after `vite build`; the hash names the caches, so
+a new build gets fresh ones and sweeps the old ones up.
+
+`/api/auth/me` is cached alongside the library, which is what lets an installed
+app answer "who is signed in" with no connection instead of bouncing you to the
+sign-in screen. Swipes and test results made offline queue in `localStorage`
+and replay in order once there is a connection.
+
+A waiting build never takes over a running page by itself — that would leave it
+asking for chunks the new build does not have. It waits, the app says so, and
+the reader decides.
 
 ## How the bot defence works
 

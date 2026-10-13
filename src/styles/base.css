@@ -20,9 +20,19 @@ body,
   height: 100%;
 }
 
+/*
+ * The canvas colour comes from <html>, and iOS paints the safe areas from it.
+ * Leaving it unset is what put a black band under the tab bar of the installed
+ * app -- the home-indicator inset, about a third of the bar's height. The tab
+ * bar's own background is translucent and sits over that strip, so the black
+ * came straight through it.
+ */
+html {
+  background: var(--bg);
+}
+
 body {
-  background: var(--bg-tint);
-  background-attachment: fixed;
+  background: var(--bg);
   color: var(--ink);
   font-family: var(--font);
   font-size: 16px;
@@ -33,6 +43,20 @@ body {
   -moz-osx-font-smoothing: grayscale;
   /* The study screens own the viewport; nothing scrolls the page itself. */
   overscroll-behavior-y: none;
+}
+
+/*
+ * The accent wash sits on a fixed layer of its own rather than on
+ * `background-attachment: fixed`, which Safari re-rasterises unpredictably in
+ * a standalone web app and which flickered on every scroll.
+ */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg-tint);
+  pointer-events: none;
 }
 
 h1,

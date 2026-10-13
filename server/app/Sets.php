@@ -30,12 +30,28 @@ final class Sets
                     (SELECT COUNT(*) FROM sl_progress p
                        JOIN sl_cards c3 ON c3.id = p.card_id
                       WHERE c3.set_id = s.id AND p.user_id = :u2
-                        AND p.dir = \'ba\' AND p.state = \'known\') AS known_ba
+                        AND p.dir = \'ba\' AND p.state = \'known\') AS known_ba,
+                    EXISTS(SELECT 1 FROM sl_results r WHERE r.user_id = :u3
+                             AND r.set_id = s.id AND r.dir = \'ab\' AND r.mode = \'choice\') AS ab_choice,
+                    EXISTS(SELECT 1 FROM sl_results r WHERE r.user_id = :u4
+                             AND r.set_id = s.id AND r.dir = \'ab\' AND r.mode = \'write\') AS ab_write,
+                    EXISTS(SELECT 1 FROM sl_results r WHERE r.user_id = :u5
+                             AND r.set_id = s.id AND r.dir = \'ba\' AND r.mode = \'choice\') AS ba_choice,
+                    EXISTS(SELECT 1 FROM sl_results r WHERE r.user_id = :u6
+                             AND r.set_id = s.id AND r.dir = \'ba\' AND r.mode = \'write\') AS ba_write
                FROM sl_sets s
                LEFT JOIN sl_users u ON u.id = s.created_by
               WHERE (s.is_published = 1 OR :drafts = 1)
               ORDER BY s.sort_order ASC, s.updated_at DESC',
-            ['u1' => $userId, 'u2' => $userId, 'drafts' => $canSeeDrafts ? 1 : 0],
+            [
+                'u1'     => $userId,
+                'u2'     => $userId,
+                'u3'     => $userId,
+                'u4'     => $userId,
+                'u5'     => $userId,
+                'u6'     => $userId,
+                'drafts' => $canSeeDrafts ? 1 : 0,
+            ],
         );
 
         return array_map(static fn (array $r): array => [
@@ -50,6 +66,10 @@ final class Sets
             'cardCount'   => (int) $r['card_count'],
             'updatedAt'   => (int) $r['updated_at'],
             'known'       => ['ab' => (int) $r['known_ab'], 'ba' => (int) $r['known_ba']],
+            'tests'       => [
+                'ab' => ['choice' => (bool) $r['ab_choice'], 'write' => (bool) $r['ab_write']],
+                'ba' => ['choice' => (bool) $r['ba_choice'], 'write' => (bool) $r['ba_write']],
+            ],
         ], $rows);
     }
 
@@ -67,14 +87,32 @@ final class Sets
             Http::fail(404, 'not_found', 'That set does not exist.');
         }
 
+        $tests = Db::one(
+            'SELECT
+                 EXISTS(SELECT 1 FROM sl_results r WHERE r.user_id = :u1 AND r.set_id = :s1
+                          AND r.dir = \'ab\' AND r.mode = \'choice\') AS ab_choice,
+                 EXISTS(SELECT 1 FROM sl_results r WHERE r.user_id = :u2 AND r.set_id = :s2
+                          AND r.dir = \'ab\' AND r.mode = \'write\')  AS ab_write,
+                 EXISTS(SELECT 1 FROM sl_results r WHERE r.user_id = :u3 AND r.set_id = :s3
+                          AND r.dir = \'ba\' AND r.mode = \'choice\') AS ba_choice,
+                 EXISTS(SELECT 1 FROM sl_results r WHERE r.user_id = :u4 AND r.set_id = :s4
+                          AND r.dir = \'ba\' AND r.mode = \'write\')  AS ba_write',
+            [
+                'u1' => $userId, 's1' => $set['id'],
+                'u2' => $userId, 's2' => $set['id'],
+                'u3' => $userId, 's3' => $set['id'],
+                'u4' => $userId, 's4' => $set['id'],
+            ],
+        ) ?? [];
+
         $cards = Db::all(
-            'SELECT c.id, c.side_a, c.side_b, c.note, c.position,
+            'SELECT c.id, c.side_a, c.side_b, c.note, c.extras, c.position,
                     MAX(CASE WHEN p.dir = \'ab\' THEN p.state END) AS state_ab,
                     MAX(CASE WHEN p.dir = \'ba\' THEN p.state END) AS state_ba
                FROM sl_cards c
                LEFT JOIN sl_progress p ON p.card_id = c.id AND p.user_id = :u
               WHERE c.set_id = :s
-              GROUP BY c.id, c.side_a, c.side_b, c.note, c.position
+              GROUP BY c.id, c.side_a, c.side_b, c.note, c.extras, c.position
               ORDER BY c.position ASC, c.id ASC',
             ['u' => $userId, 's' => $set['id']],
         );
@@ -89,12 +127,23 @@ final class Sets
             'published'   => (bool) $set['is_published'],
             'author'      => $set['author'] === null ? null : (string) $set['author'],
             'updatedAt'   => (int) $set['updated_at'],
+            'tests'       => [
+                'ab' => [
+                    'choice' => (bool) ($tests['ab_choice'] ?? false),
+                    'write'  => (bool) ($tests['ab_write'] ?? false),
+                ],
+                'ba' => [
+                    'choice' => (bool) ($tests['ba_choice'] ?? false),
+                    'write'  => (bool) ($tests['ba_write'] ?? false),
+                ],
+            ],
             'cards'       => array_map(static fn (array $c): array => [
                 'id'    => (int) $c['id'],
                 'a'     => (string) $c['side_a'],
                 'b'     => (string) $c['side_b'],
-                'note'  => $c['note'] === null ? null : (string) $c['note'],
-                'state' => [
+                'note'   => $c['note'] === null ? null : (string) $c['note'],
+                'extras' => self::decodeExtras($c['extras'] ?? null),
+                'state'  => [
                     'ab' => (string) ($c['state_ab'] ?? 'new'),
                     'ba' => (string) ($c['state_ba'] ?? 'new'),
                 ],
@@ -233,6 +282,7 @@ final class Sets
                 $a = self::text($raw['a'] ?? '', 300, 'card', required: true);
                 $b = self::text($raw['b'] ?? '', 300, 'card', required: true);
                 $n = self::text($raw['note'] ?? '', 300, 'note');
+                $x = self::encodeExtras($raw['extras'] ?? null);
                 $id = isset($raw['id']) ? (int) $raw['id'] : 0;
 
                 if ($id > 0) {
@@ -240,9 +290,17 @@ final class Sets
                         ['id' => $id, 's' => $setId]);
                     if ((int) $owned === 1) {
                         Db::run(
-                            'UPDATE sl_cards SET side_a = :a, side_b = :b, note = :n, position = :p
+                            'UPDATE sl_cards
+                                SET side_a = :a, side_b = :b, note = :n, extras = :x, position = :p
                               WHERE id = :id',
-                            ['a' => $a, 'b' => $b, 'n' => $n === '' ? null : $n, 'p' => $position, 'id' => $id],
+                            [
+                                'a'  => $a,
+                                'b'  => $b,
+                                'n'  => $n === '' ? null : $n,
+                                'x'  => $x,
+                                'p'  => $position,
+                                'id' => $id,
+                            ],
                         );
                         $keep[] = $id;
                         $position++;
@@ -251,13 +309,14 @@ final class Sets
                 }
 
                 Db::run(
-                    'INSERT INTO sl_cards (set_id, side_a, side_b, note, position, created_at)
-                     VALUES (:s, :a, :b, :n, :p, :t)',
+                    'INSERT INTO sl_cards (set_id, side_a, side_b, note, extras, position, created_at)
+                     VALUES (:s, :a, :b, :n, :x, :p, :t)',
                     [
                         's' => $setId,
                         'a' => $a,
                         'b' => $b,
                         'n' => $n === '' ? null : $n,
+                        'x' => $x,
                         'p' => $position,
                         't' => Util::now(),
                     ],
@@ -287,6 +346,76 @@ final class Sets
             }
         }
         return $slug;
+    }
+
+    /**
+     * The grammar hanging off a card, as JSON.
+     *
+     * Rebuilt field by field rather than stored as it arrived: this column is
+     * whatever an editor's browser posted, and it comes back out into every
+     * other reader's app.
+     *
+     * @return string|null JSON, or null when the card has no extras at all
+     */
+    private static function encodeExtras(mixed $value): ?string
+    {
+        if (!is_array($value)) {
+            return null;
+        }
+        $out = [];
+
+        foreach (['article' => 80, 'plural' => 160] as $field => $max) {
+            $part = is_array($value[$field] ?? null) ? $value[$field] : [];
+            $sides = [];
+            foreach (['a', 'b'] as $side) {
+                $text = self::text($part[$side] ?? '', $max, $field);
+                if ($text !== '') {
+                    $sides[$side] = $text;
+                }
+            }
+            if ($sides !== []) {
+                $out[$field] = $sides;
+            }
+        }
+
+        $genders = is_array($value['gender'] ?? null) ? $value['gender'] : [];
+        $gender  = [];
+        foreach (['a', 'b'] as $side) {
+            if (in_array($genders[$side] ?? null, ['m', 'f'], true)) {
+                $gender[$side] = $genders[$side];
+            }
+        }
+        if ($gender !== []) {
+            $out['gender'] = $gender;
+        }
+
+        $forms = is_array($value['conj'] ?? null) ? $value['conj'] : [];
+        $conj  = [];
+        foreach (['io', 'tu', 'lui', 'noi', 'voi', 'loro'] as $person) {
+            $text = self::text($forms[$person] ?? '', 160, 'conjugation');
+            if ($text !== '') {
+                $conj[$person] = $text;
+            }
+        }
+        if ($conj !== []) {
+            $out['conj'] = $conj;
+        }
+
+        if ($out === []) {
+            return null;
+        }
+        $json = json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return $json === false ? null : $json;
+    }
+
+    /** Always an object in the response, never an empty JSON array. */
+    private static function decodeExtras(mixed $raw): object
+    {
+        if (!is_string($raw) || $raw === '') {
+            return (object) [];
+        }
+        $decoded = json_decode($raw, true);
+        return (object) (is_array($decoded) ? $decoded : []);
     }
 
     private static function text(mixed $value, int $max, string $field, bool $required = false): string

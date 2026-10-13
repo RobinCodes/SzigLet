@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ApiError, api, outbox } from '../lib/api'
+import { api, outbox } from '../lib/api'
 import { useToast } from '../lib/toast'
+import { useI18n } from '../lib/i18n'
+import { errorText } from '../lib/errors'
 import { haptics } from '../lib/haptics'
 import {
   answerLang,
@@ -13,11 +15,16 @@ import {
   shuffle,
 } from '../lib/study'
 import { displayAnswer, grade, type Grade } from '../lib/text'
-import { duration, percent, plural } from '../lib/format'
+import { percent } from '../lib/format'
+import { readShow } from '../lib/display'
+import { alsoAccepted, answerKey, hasConjugation, parts, promptKey } from '../lib/word'
 import type { Card, Direction, ProgressUpdate, StudySet, TestMode } from '../lib/types'
 import { Shell, TopBar } from '../components/Shell'
 import { Bar, Empty, Segmented, Spinner } from '../components/Bits'
 import { Icon } from '../components/Icon'
+import { Sheet } from '../components/Sheet'
+import { Conjugation } from '../components/Conjugation'
+import { Word } from '../components/Word'
 
 type Phase = 'setup' | 'running' | 'roundEnd' | 'done'
 
@@ -30,6 +37,7 @@ export function TestRun() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const toast = useToast()
+  const { t, tx, duration } = useI18n()
 
   const dir: Direction = params.get('dir') === 'ba' ? 'ba' : 'ab'
 
@@ -45,11 +53,23 @@ export function TestRun() {
 
   const [typed, setTyped] = useState('')
   const [answered, setAnswered] = useState<Answered | null>(null)
+  const [verb, setVerb] = useState<Card | null>(null)
+
+  const [show] = useState(() => readShow(slug))
 
   const [firstPass, setFirstPass] = useState({ total: 0, correct: 0 })
 
   const pending = useRef<ProgressUpdate[]>([])
   const startedAt = useRef(Date.now())
+
+  /**
+   * Near misses already forgiven, per card.
+   *
+   * A spelling nudge that can be collected over and over is a trap: type the
+   * same almost-right word twice and the test never moves on, with nothing on
+   * screen offering a way out. One nudge per card, then it counts as wrong.
+   */
+  const nudges = useRef(new Map<number, number>())
   const answerInput = useRef<HTMLInputElement>(null)
   const advanceTimer = useRef<number | undefined>(undefined)
 
@@ -68,7 +88,7 @@ export function TestRun() {
       })
       .catch((caught: unknown) => {
         if (!cancelled) {
-          toast.error(caught instanceof ApiError ? caught.message : 'Could not load this set.')
+          toast.error(errorText(t, caught, 'set.loadFailed'))
           navigate(`/s/${slug}`, { replace: true })
         }
       })
@@ -105,6 +125,7 @@ export function TestRun() {
     }
     return buildChoiceQuestion(card, set.cards, dir)
     // A fresh set of distractors per card, per round.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card, set, dir, mode, round])
 
   const start = () => {
@@ -119,6 +140,7 @@ export function TestRun() {
     setAnswered(null)
     setTyped('')
     setFirstPass({ total: 0, correct: 0 })
+    nudges.current = new Map()
     startedAt.current = Date.now()
     setPhase('running')
   }
@@ -172,8 +194,8 @@ export function TestRun() {
       setAnswered({ grade: result, ...record })
 
       // Right answers move on by themselves; wrong ones wait so the correct
-      // answer can actually be read.
-      if (right && mode === 'choice') {
+      // answer, and any note on the card, can actually be read.
+      if (right && mode === 'choice' && !card.note) {
         advanceTimer.current = window.setTimeout(advance, 620)
       }
     },
@@ -188,26 +210,40 @@ export function TestRun() {
     register(correct ? 'correct' : 'wrong', { chosen: optionIndex })
   }
 
+  const retryWritten = useCallback(() => {
+    setAnswered(null)
+    setTyped('')
+    answerInput.current?.focus()
+  }, [])
+
   const submitWritten = (event: React.FormEvent) => {
     event.preventDefault()
-    if (!card || answered) {
+    if (!card) {
       return
     }
-    const verdict = grade(typed, answerSide(card, dir))
 
-    // "Almost" is a spelling nudge, not a mistake: offer the same card again.
-    if (verdict === 'close') {
+    // "Almost" leaves the field live so the word can be typed again, and
+    // Enter has to do what the Try again button does — otherwise the only way
+    // on from a near miss was to reach for the button.
+    if (answered?.grade === 'close') {
+      retryWritten()
+      return
+    }
+    if (answered) {
+      return
+    }
+
+    const verdict = grade(typed, answerSide(card, dir), alsoAccepted(card, answerKey(dir)))
+
+    // "Almost" is a spelling nudge, not a mistake: offer the same card again —
+    // but only once, so there is no loop to get stuck in.
+    if (verdict === 'close' && (nudges.current.get(card.id) ?? 0) === 0) {
+      nudges.current.set(card.id, 1)
       haptics.tap()
       setAnswered({ grade: 'close', typed })
       return
     }
-    register(verdict, { typed })
-  }
-
-  const retryWritten = () => {
-    setAnswered(null)
-    setTyped('')
-    answerInput.current?.focus()
+    register(verdict === 'close' ? 'wrong' : verdict, { typed })
   }
 
   const nextRound = () => {
@@ -284,8 +320,8 @@ export function TestRun() {
     return (
       <Shell>
         <TopBar back={`/s/${slug}`} title={set.title} />
-        <Empty icon="cards" title="Nothing to test">
-          This set has no cards yet.
+        <Empty icon="cards" title={t('test.nothingTitle')}>
+          {t('test.nothingBody')}
         </Empty>
       </Shell>
     )
@@ -297,23 +333,26 @@ export function TestRun() {
   if (phase === 'setup') {
     return (
       <Shell>
-        <TopBar back={`/s/${slug}`} title="Test" />
+        <TopBar back={`/s/${slug}`} title={t('test.title')} />
         <div className="stack enter" style={{ '--gap': '1.5rem' } as React.CSSProperties}>
           <div>
-            <h1 className="sethead__title">How do you want to be tested?</h1>
+            <h1 className="sethead__title">{t('test.setupTitle')}</h1>
             <p className="muted small" style={{ marginTop: '0.4rem' }}>
-              {plural(set.cards.length, 'card', 'cards')} · {fromLabel} → {toLabel}. Anything
-              you get wrong comes back until you get it right.
+              {t('test.setupBody', {
+                cards: t('set.cards', { n: set.cards.length }),
+                from: fromLabel,
+                to: toLabel,
+              })}
             </p>
           </div>
 
           <Segmented
-            label="Test mode"
+            label={t('test.modeLabel')}
             value={mode}
             onChange={setMode}
             options={[
-              { value: 'choice', label: 'Multiple choice' },
-              { value: 'write', label: 'Write it out' },
+              { value: 'choice', label: t('test.choice') },
+              { value: 'write', label: t('test.write') },
             ]}
           />
 
@@ -323,17 +362,12 @@ export function TestRun() {
               style={{ color: 'var(--accent)', flex: 'none' }}
             />
             <p className="small grow">
-              {mode === 'choice'
-                ? 'Four options, one right answer. Quick, and good for recognising words.'
-                : 'Type the answer. Accents are forgiven with a nudge, and a near miss lets you try again.'}
+              {mode === 'choice' ? t('test.choiceHint') : t('test.writeHint')}
             </p>
           </div>
 
           {set.cards.length < MIN_CHOICE_CARDS && mode === 'choice' && (
-            <p className="field__error small">
-              Multiple choice needs at least {MIN_CHOICE_CARDS} cards. Use written answers
-              for this set.
-            </p>
+            <p className="field__error small">{t('test.needCards', { n: MIN_CHOICE_CARDS })}</p>
           )}
 
           <button
@@ -343,7 +377,7 @@ export function TestRun() {
             disabled={mode === 'choice' && set.cards.length < MIN_CHOICE_CARDS}
           >
             <Icon name="play" />
-            Start the test
+            {t('test.start')}
           </button>
         </div>
       </Shell>
@@ -353,7 +387,7 @@ export function TestRun() {
   if (phase === 'roundEnd') {
     return (
       <Shell>
-        <TopBar back={`/s/${slug}`} title={`Round ${round}`} />
+        <TopBar back={`/s/${slug}`} title={t('test.round', { n: round })} />
         <div className="result">
           <div
             style={{
@@ -370,12 +404,9 @@ export function TestRun() {
             <Icon name="rotate" width={28} height={28} />
           </div>
           <div>
-            <h1 className="result__headline">
-              {plural(missed.length, 'card to repeat', 'cards to repeat')}
-            </h1>
+            <h1 className="result__headline">{t('test.toRepeat', { n: missed.length })}</h1>
             <p className="muted small" style={{ marginTop: '0.35rem' }}>
-              Round {round} done. These come back now — the test ends when every card is
-              right.
+              {t('test.roundEndBody', { n: round })}
             </p>
           </div>
 
@@ -393,7 +424,7 @@ export function TestRun() {
 
           <button type="button" className="btn btn--primary btn--lg btn--block" onClick={nextRound}>
             <Icon name="arrowRight" />
-            Repeat these {missed.length}
+            {t('test.repeatThese', { n: missed.length })}
           </button>
         </div>
       </Shell>
@@ -406,10 +437,10 @@ export function TestRun() {
 
     return (
       <Shell>
-        <TopBar back={`/s/${slug}`} title="Result" />
+        <TopBar back={`/s/${slug}`} title={t('test.result')} />
         <div className="result">
           <div>
-            <p className="eyebrow">First attempt</p>
+            <p className="eyebrow">{t('test.firstAttempt')}</p>
             <div
               className="result__score"
               style={{ color: score >= 80 ? 'var(--known)' : score >= 50 ? 'var(--rehearse)' : 'var(--wrong)' }}
@@ -417,47 +448,50 @@ export function TestRun() {
               {score}%
             </div>
             <p className="muted small">
-              {firstPass.correct} of {firstPass.total} right first time
+              {t('test.rightFirstTime', { correct: firstPass.correct, total: firstPass.total })}
             </p>
           </div>
 
           <h1 className="result__headline">
             {flawless
-              ? 'Perfect run'
+              ? t('test.perfect')
               : score >= 80
-                ? 'Nicely done'
+                ? t('test.nicely')
                 : score >= 50
-                  ? 'Getting there'
-                  : 'Worth another pass'}
+                  ? t('test.gettingThere')
+                  : t('test.anotherPass')}
           </h1>
 
           <div className="statgrid" style={{ width: '100%' }}>
             <div className="stat">
               <div className="stat__value">{round}</div>
-              <div className="stat__label">Rounds</div>
+              <div className="stat__label">{t('test.rounds')}</div>
             </div>
             <div className="stat">
               <div className="stat__value">{stumbled.length}</div>
-              <div className="stat__label">Stumbled</div>
+              <div className="stat__label">{t('test.stumbled')}</div>
             </div>
             <div className="stat">
               <div className="stat__value" style={{ fontSize: '1.1rem' }}>
                 {duration(Date.now() - startedAt.current)}
               </div>
-              <div className="stat__label">Time</div>
+              <div className="stat__label">{t('test.time')}</div>
             </div>
           </div>
 
           {stumbled.length > 0 && (
             <div className="wronglist stack" style={{ '--gap': '0.5rem' } as React.CSSProperties}>
-              <p className="eyebrow">Worth another look</p>
+              <p className="eyebrow">{t('test.worthLook')}</p>
               <div className="panel panel--flush">
                 {stumbled.map((item) => (
-                  <div className="cardrow" key={item.id}>
-                    <span className="cardrow__a truncate">{promptSide(item, dir)}</span>
-                    <span className="cardrow__b truncate">
-                      {displayAnswer(answerSide(item, dir))}
-                    </span>
+                  <div className="cardlist__item" key={item.id}>
+                    <div className="cardlist__row">
+                      <span className="cardrow__a truncate">{promptSide(item, dir)}</span>
+                      <span className="cardrow__b truncate">
+                        {displayAnswer(answerSide(item, dir))}
+                      </span>
+                    </div>
+                    {item.note && <p className="cardlist__note">{item.note}</p>}
                   </div>
                 ))}
               </div>
@@ -474,14 +508,14 @@ export function TestRun() {
               }}
             >
               <Icon name="rotate" />
-              Test again
+              {t('test.testAgain')}
             </button>
             <button
               type="button"
               className="btn btn--ghost btn--block"
               onClick={() => navigate(`/s/${slug}`)}
             >
-              Back to the set
+              {t('cards.backToSet')}
             </button>
           </div>
         </div>
@@ -491,13 +525,14 @@ export function TestRun() {
 
   // phase === 'running'
   const revealed = answered !== null
+  const settled = revealed && answered.grade !== 'close'
   const correctAnswer = card ? displayAnswer(answerSide(card, dir)) : ''
 
   return (
     <Shell immersive>
       <TopBar
         back={`/s/${slug}`}
-        title={round > 1 ? `Round ${round}` : set.title}
+        title={round > 1 ? t('test.round', { n: round }) : set.title}
         actions={
           <span className="chip">
             {fromLabel} <Icon name="arrowRight" width={11} height={11} /> {toLabel}
@@ -508,18 +543,23 @@ export function TestRun() {
       <div className="stack" style={{ '--gap': '0.4rem' } as React.CSSProperties}>
         <Bar value={index + (revealed ? 1 : 0)} total={queue.length} />
         <div className="spread tiny faint">
-          <span className="num">
-            {index + 1} / {queue.length}
-          </span>
-          {missed.length > 0 && <span>{missed.length} to repeat</span>}
+          <span className="num">{t('test.counter', { index: index + 1, total: queue.length })}</span>
+          {missed.length > 0 && <span>{t('test.repeatShort', { n: missed.length })}</span>}
         </div>
       </div>
 
       <div className="quiz">
         <div className="quiz__prompt" key={card?.id}>
           <div>
-            <p className="quiz__term">{card ? promptSide(card, dir) : ''}</p>
-            <p className="quiz__ask">in {toLabel}</p>
+            {card ? (
+              <Word
+                word={{ ...parts(card, promptKey(dir), show), term: promptSide(card, dir) }}
+                className="quiz__term"
+              />
+            ) : (
+              <p className="quiz__term" />
+            )}
+            <p className="quiz__ask">{t('test.inLang', { lang: toLabel })}</p>
           </div>
         </div>
 
@@ -563,20 +603,20 @@ export function TestRun() {
               className="input"
               value={typed}
               onChange={(event) => setTyped(event.target.value)}
-              placeholder={`Type the ${toLabel} word`}
+              placeholder={t('test.typePlaceholder', { lang: toLabel })}
               autoComplete="off"
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
               enterKeyHint="done"
-              disabled={revealed && answered?.grade !== 'close'}
+              disabled={settled}
               // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
             />
 
             {!revealed && (
               <button type="submit" className="btn btn--primary btn--block" disabled={!typed.trim()}>
-                Check
+                {t('test.check')}
               </button>
             )}
 
@@ -584,11 +624,21 @@ export function TestRun() {
               <>
                 <div className="verdict verdict--close">
                   <Icon name="alert" />
-                  <span>Almost — check your spelling and try once more.</span>
+                  <span>
+                    {t('test.almost')} {t('test.lastNudge')}
+                  </span>
                 </div>
-                <button type="button" className="btn btn--block" onClick={retryWritten}>
+                {/* Enter in the field above does the same thing. */}
+                <button type="submit" className="btn btn--block">
                   <Icon name="undo" />
-                  Try again
+                  {t('test.tryAgain')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--block btn--sm"
+                  onClick={() => card && register('wrong', { typed })}
+                >
+                  {t('test.giveUp')}
                 </button>
               </>
             )}
@@ -597,7 +647,7 @@ export function TestRun() {
               <div className="verdict verdict--correct">
                 <Icon name="check" />
                 <span>
-                  Right — mind the accents:{' '}
+                  {t('test.accentRight')}{' '}
                   <span className="verdict__answer">{correctAnswer}</span>
                 </span>
               </div>
@@ -606,7 +656,7 @@ export function TestRun() {
             {answered?.grade === 'correct' && (
               <div className="verdict verdict--correct">
                 <Icon name="check" />
-                <span>Correct</span>
+                <span>{t('test.correct')}</span>
               </div>
             )}
 
@@ -614,25 +664,57 @@ export function TestRun() {
               <div className="verdict verdict--wrong">
                 <Icon name="x" />
                 <span>
-                  The answer is <span className="verdict__answer">{correctAnswer}</span>
+                  {tx('test.theAnswerIs', {
+                    answer: <span className="verdict__answer">{correctAnswer}</span>,
+                  })}
                 </span>
               </div>
             )}
           </form>
         )}
 
-        {revealed && answered.grade !== 'close' && (
+        {/* The note is part of the answer: this is where "il gesso is kréta in
+            the classroom, but also gipsz" has to be readable. */}
+        {settled && card?.note && (
+          <div className="quiz__note">
+            <Icon name="sparkle" />
+            <span>{card.note}</span>
+          </div>
+        )}
+
+        {settled && card && hasConjugation(card) && (
+          <button
+            type="button"
+            className="btn btn--block btn--sm"
+            onClick={() => setVerb(card)}
+          >
+            <Icon name="list" />
+            {t('word.conjugation')}
+          </button>
+        )}
+
+        {settled && (
           <button
             type="button"
             className="btn btn--primary btn--lg btn--block"
             onClick={advance}
             autoFocus={mode === 'write'}
           >
-            {index + 1 < queue.length ? 'Next' : missed.length > 0 ? 'See what to repeat' : 'Finish'}
+            {index + 1 < queue.length
+              ? t('common.next')
+              : missed.length > 0
+                ? t('test.seeRepeat')
+                : t('common.finish')}
             <Icon name="arrowRight" />
           </button>
         )}
       </div>
+
+      {verb && (
+        <Sheet title={`${t('word.conjugation')} — ${verb.a}`} onClose={() => setVerb(null)}>
+          <Conjugation card={verb} />
+        </Sheet>
+      )}
     </Shell>
   )
 }

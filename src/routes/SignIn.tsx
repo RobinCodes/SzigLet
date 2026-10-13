@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { useI18n } from '../lib/i18n'
+import { errorText } from '../lib/errors'
 import { Icon, Logo } from '../components/Icon'
 import { Bar, Segmented } from '../components/Bits'
 
@@ -11,6 +13,7 @@ export function SignIn() {
   const { user, loading, registrationOpen, login, register } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const { t } = useI18n()
 
   const [mode, setMode] = useState<Mode>('signin')
   const [username, setUsername] = useState('')
@@ -43,7 +46,7 @@ export function SignIn() {
     setError(null)
 
     if (mode === 'register' && password !== confirm) {
-      setError('The two passwords do not match.')
+      setError(t('signin.mismatch'))
       return
     }
 
@@ -62,13 +65,12 @@ export function SignIn() {
       await action(credentials, setVerifying)
       navigate('/', { replace: true })
     } catch (caught) {
-      if (caught instanceof ApiError) {
-        setError(caught.message)
-      } else if (caught instanceof Error) {
-        setError(caught.message)
-      } else {
-        setError('Something went wrong. Please try again.')
-      }
+      // A proof-of-work failure arrives as a plain Error, not an ApiError.
+      setError(
+        caught instanceof Error && !(caught instanceof ApiError)
+          ? caught.message
+          : errorText(t, caught, 'errors.generic'),
+      )
       // A fresh challenge is needed for the next attempt anyway.
       mountedAt.current = Date.now() - 2000
     } finally {
@@ -100,19 +102,19 @@ export function SignIn() {
             <div>
               <h1 style={{ fontSize: '1.9rem', letterSpacing: '-0.04em' }}>SzigLet</h1>
               <p className="muted small" style={{ marginTop: '0.2rem' }}>
-                One shared library. Swipe to learn, test to be sure.
+                {t('signin.tagline')}
               </p>
             </div>
           </div>
 
           {registrationOpen && (
             <Segmented
-              label="Sign in or create an account"
+              label={t('signin.modeLabel')}
               value={mode}
               onChange={(next) => setMode(next)}
               options={[
-                { value: 'signin', label: 'Sign in' },
-                { value: 'register', label: 'Create account' },
+                { value: 'signin', label: t('signin.signin') },
+                { value: 'register', label: t('signin.createAccount') },
               ]}
             />
           )}
@@ -120,7 +122,7 @@ export function SignIn() {
           <form onSubmit={submit} className="stack" style={{ '--gap': '0.875rem' } as React.CSSProperties}>
             <div className="field">
               <label className="field__label" htmlFor="username">
-                Name
+                {t('signin.name')}
               </label>
               <input
                 id="username"
@@ -135,13 +137,13 @@ export function SignIn() {
                 required
                 minLength={3}
                 maxLength={24}
-                placeholder="How should we call you?"
+                placeholder={t('signin.namePlaceholder')}
               />
             </div>
 
             <div className="field">
               <label className="field__label" htmlFor="password">
-                Password
+                {t('signin.password')}
               </label>
               <input
                 id="password"
@@ -154,20 +156,17 @@ export function SignIn() {
                 minLength={8}
                 maxLength={200}
                 enterKeyHint={mode === 'signin' ? 'go' : 'next'}
-                placeholder={mode === 'register' ? 'At least 8 characters' : ''}
+                placeholder={mode === 'register' ? t('signin.passwordPlaceholder') : ''}
               />
               {mode === 'register' && (
-                <p className="field__hint">
-                  There is no email here, so there is no password reset. Write it down
-                  somewhere safe.
-                </p>
+                <p className="field__hint">{t('signin.noReset')}</p>
               )}
             </div>
 
             {mode === 'register' && (
               <div className="field">
                 <label className="field__label" htmlFor="confirm">
-                  Password again
+                  {t('signin.passwordAgain')}
                 </label>
                 <input
                   id="confirm"
@@ -206,11 +205,11 @@ export function SignIn() {
               {busy ? (
                 <>
                   <span className="spinner" />
-                  <span>Verifying…</span>
+                  <span>{t('signin.verifying')}</span>
                 </>
               ) : (
                 <>
-                  <span>{mode === 'signin' ? 'Sign in' : 'Create account'}</span>
+                  <span>{mode === 'signin' ? t('signin.signin') : t('signin.createAccount')}</span>
                   <Icon name="arrowRight" />
                 </>
               )}
@@ -219,21 +218,19 @@ export function SignIn() {
             {busy && (
               <div className="stack" style={{ '--gap': '0.35rem' } as React.CSSProperties}>
                 <Bar value={verifying * 100} total={100} />
-                <p className="tiny faint center">
-                  Your device is solving a small puzzle to prove it is not a bot.
-                </p>
+                <p className="tiny faint center">{t('signin.powHint')}</p>
               </div>
             )}
           </form>
 
           {!registrationOpen && mode === 'signin' && (
-            <p className="tiny faint center">New accounts are closed at the moment.</p>
+            <p className="tiny faint center">{t('signin.closed')}</p>
           )}
 
           <p className="tiny faint center">
-            Using a phone?{' '}
+            {t('signin.onPhone')}{' '}
             <a href="/install" style={{ color: 'var(--accent-soft)', fontWeight: 600 }}>
-              Add SzigLet to your home screen
+              {t('signin.addToHome')}
             </a>
           </p>
         </div>

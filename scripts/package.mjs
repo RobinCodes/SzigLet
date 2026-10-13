@@ -52,6 +52,13 @@ let htaccess = await readFile(join(root, 'deploy', 'htaccess-root'), 'utf8')
 htaccess = htaccess.replace('__INLINE_SCRIPT_HASHES__', hashes.join(' '))
 await writeFile(join(out, '.htaccess'), htaccess)
 
+// Recorded in the repository so the deploy workflow can tell when the policy
+// has moved. public_html/.htaccess cannot be overwritten automatically -- it
+// carries cPanel's generated PHP handler block, which is not in this build --
+// so a changed hash is a manual step, and silently skipping it would have the
+// live site blocking its own bootstrap script.
+await writeFile(join(root, 'deploy', 'csp-hashes.txt'), hashes.join(' ') + '\n')
+
 await writeFile(
   join(out, 'UPLOAD-ME.txt'),
   [

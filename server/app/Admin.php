@@ -47,6 +47,23 @@ final class Admin
         if ($target === null) {
             Http::fail(404, 'not_found', 'No such account.');
         }
+        if ($target['role'] === $role) {
+            return;
+        }
+
+        // Owners can appoint and un-appoint each other, but somebody has to be
+        // left holding the keys: with no owner, nobody could ever hand them out
+        // again.
+        if ($target['role'] === 'owner') {
+            $owners = (int) (Db::value("SELECT COUNT(*) FROM sl_users WHERE role = 'owner'") ?? 0);
+            if ($owners <= 1) {
+                Http::fail(
+                    422,
+                    'last_owner',
+                    'SzigLet needs at least one owner. Appoint another one before standing this one down.',
+                );
+            }
+        }
 
         Db::run('UPDATE sl_users SET role = :r WHERE id = :id', ['r' => $role, 'id' => $targetId]);
         $this->security->log($actorId, 'role_change',

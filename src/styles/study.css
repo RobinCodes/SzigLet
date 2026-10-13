@@ -160,6 +160,35 @@
   text-align: right;
 }
 
+/*
+ * The card list on a set, where a card may carry a note underneath it. A
+ * `.cardrow` cannot do this because it is a single flex row, and it is shared
+ * with four other lists.
+ */
+.cardlist__item {
+  padding: 0.7rem 0.875rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.cardlist__item:last-child {
+  border-bottom: 0;
+}
+
+.cardlist__row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9375rem;
+}
+
+.cardlist__note {
+  margin-top: 0.3rem;
+  padding-left: 1.45rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--ink-faint);
+}
+
 /* ── Flashcard deck ─────────────────────────────────────────────────────── */
 
 .deck {
@@ -184,7 +213,9 @@
   position: absolute;
   inset: 0;
   border-radius: var(--r-xl);
-  will-change: transform;
+  /* Promoted up front: asking for a layer mid-gesture costs a frame. */
+  will-change: transform, opacity;
+  transform: translate3d(0, 0, 0);
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
@@ -201,11 +232,12 @@
 }
 
 .flashcard--settling {
-  transition: transform var(--t-base) var(--ease-spring);
+  transition: transform 300ms var(--ease-spring);
 }
 
 .flashcard--leaving {
-  transition: transform 320ms var(--ease), opacity 320ms var(--ease);
+  transition: transform var(--t-swipe) var(--ease-exit),
+    opacity var(--t-swipe) linear;
   pointer-events: none;
 }
 
@@ -284,6 +316,13 @@
   text-transform: uppercase;
   opacity: 0;
   pointer-events: none;
+  transition: opacity 140ms linear;
+}
+
+/* While a finger is down the opacity is driven frame by frame; a transition
+   on top of that would only add lag. */
+.flashcard--dragging .stamp {
+  transition: none;
 }
 
 .stamp--known {
@@ -390,6 +429,29 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-faint);
+}
+
+/* The card's note, once the answer is on the table. */
+.quiz__note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--ink-muted);
+  animation: fade-up var(--t-base) var(--ease) both;
+}
+
+.quiz__note svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 0.15rem;
+  color: var(--accent);
 }
 
 .options {
@@ -627,6 +689,89 @@
   font-size: 0.9375rem;
 }
 
+/* One card and its optional note, grouped so they read as a unit. */
+.editcard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.editcard__note {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.4rem;
+  align-items: start;
+  animation: fade-up var(--t-base) var(--ease) both;
+}
+
+.editcard__note .input {
+  min-height: 2.5rem;
+  font-size: 0.875rem;
+}
+
+.editcard__add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+/* Article, plural, gender and the verb table: open only when asked for. */
+.editcard__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  animation: fade-up var(--t-base) var(--ease) both;
+}
+
+.editcard__grammar {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr 1fr 6.5rem;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.editcard__grammar .input {
+  min-height: 2.4rem;
+  font-size: 0.875rem;
+}
+
+.editcard__side {
+  font-size: 0.75rem;
+  font-weight: 620;
+  color: var(--ink-faint);
+}
+
+.editcard__conj {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.4rem;
+}
+
+.editcard__conj .input {
+  min-height: 2.4rem;
+  font-size: 0.875rem;
+}
+
+.editcard__conj .field__label {
+  font-size: 0.6875rem;
+  font-weight: 650;
+  text-transform: lowercase;
+}
+
+@media (max-width: 30rem) {
+  .editcard__grammar {
+    grid-template-columns: 1fr 1fr;
+  }
+  .editcard__side,
+  .editcard__grammar .select {
+    grid-column: 1 / -1;
+  }
+}
+
 .editrow__handle {
   display: grid;
   place-items: center;
@@ -708,11 +853,20 @@
   animation: fade-in var(--t-base) var(--ease) both;
 }
 
+/*
+ * `--kb` and `--vvh` are published by Sheet.tsx from `visualViewport`: the
+ * height the on-screen keyboard covers, and the height that is actually
+ * visible. iOS does not shrink the layout viewport for the keyboard, so
+ * without them a fixed sheet sits behind it and its buttons are unreachable.
+ */
 .sheet {
   position: fixed;
   z-index: 51;
-  inset: auto 0 0 0;
+  inset: auto 0 var(--kb, 0px) 0;
+  display: flex;
+  flex-direction: column;
   max-width: var(--col);
+  max-height: calc(var(--vvh, 100dvh) - 1.5rem);
   margin-inline: auto;
   padding: 1rem var(--gutter) calc(var(--safe-bottom) + 1rem);
   background: var(--surface);
@@ -721,6 +875,30 @@
   border-radius: var(--r-xl) var(--r-xl) 0 0;
   box-shadow: var(--shadow-lg);
   animation: sheet-up var(--t-base) var(--ease) both;
+}
+
+.sheet__title {
+  flex: none;
+  margin-bottom: 0.75rem;
+}
+
+/* Long content scrolls here rather than pushing the actions off screen. */
+.sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  margin-inline: calc(var(--gutter) * -1);
+  padding-inline: var(--gutter);
+}
+
+.sheet__actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.875rem;
 }
 
 @keyframes sheet-up {
@@ -747,6 +925,7 @@
     border-radius: var(--r-xl);
     border-bottom: 1px solid var(--line);
     max-width: 28rem;
+    max-height: calc(var(--vvh, 100dvh) - 4rem);
     animation: pop var(--t-base) var(--ease) both;
   }
 }
@@ -756,10 +935,152 @@
   position: absolute;
   inset: 0;
   transform-style: preserve-3d;
-  transition: transform 480ms var(--ease);
+  transition: transform 380ms var(--ease);
   will-change: transform;
 }
 
 .flashcard .stamp {
   z-index: 4;
+}
+
+/* ── Word grammar ───────────────────────────────────────────────────────── */
+
+.word__article {
+  color: var(--ink-faint);
+  font-weight: 560;
+}
+
+.word__gender {
+  margin-left: 0.3em;
+  font-size: 0.6em;
+  font-weight: 620;
+  color: var(--accent-soft);
+  vertical-align: 0.25em;
+}
+
+.word__plural {
+  margin-top: 0.4rem;
+  font-size: 0.9375rem;
+  color: var(--ink-muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* Chips that do something, as opposed to chips that only label something. */
+.chip--button {
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+
+.chip--button:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.chip--button.chip--accent:hover {
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+}
+
+.chip--button:active {
+  transform: scale(0.95);
+}
+
+.revealrow,
+.togglerow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.togglerow {
+  justify-content: flex-start;
+}
+
+.revealrow {
+  margin-top: 0.75rem;
+}
+
+/* ── Verb table ─────────────────────────────────────────────────────────── */
+
+.conj {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+
+.conj__card {
+  position: relative;
+  height: 3.5rem;
+  perspective: 600px;
+}
+
+.conj__inner {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transition: transform 320ms var(--ease);
+}
+
+.conj__face {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  font-size: 0.9375rem;
+  font-weight: 560;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+  color: var(--ink-faint);
+}
+
+.conj__face--back {
+  transform: rotateX(180deg);
+  background: var(--accent-dim);
+  border-color: var(--accent-line);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ── Two-direction scores ───────────────────────────────────────────────── */
+
+.ring__value--second {
+  stroke: var(--accent);
+  opacity: 0.45;
+}
+
+.setcard__scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin-top: 0.3rem;
+  font-size: 0.6875rem;
+  color: var(--ink-faint);
+}
+
+.setcard__scores span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.setcard__scores svg {
+  width: 10px;
+  height: 10px;
+  opacity: 0.6;
+}
+
+.setcard__scores strong {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
 }
