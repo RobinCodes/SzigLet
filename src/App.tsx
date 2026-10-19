@@ -13,6 +13,13 @@ import { Install } from './routes/Install'
 import { Account } from './routes/Account'
 import { ProgressView } from './routes/ProgressView'
 import { NotFound } from './routes/NotFound'
+import { CourseView } from './routes/CourseView'
+import { CourseEditor } from './routes/CourseEditor'
+import { NodeView } from './routes/NodeView'
+import { NodeEditor } from './routes/NodeEditor'
+import { Lesson, Practice } from './routes/Lesson'
+import { Reports } from './routes/Reports'
+import { AuthorStats } from './routes/AuthorStats'
 
 /** Sends signed-out readers to the sign-in screen, remembering where to return. */
 function Private({ children, owner = false, editor = false }: {
@@ -57,6 +64,17 @@ export function App() {
       <Route path="/s/:slug/test" element={<Private><TestRun /></Private>} />
       <Route path="/s/:slug/edit" element={<Private editor><Editor /></Private>} />
       <Route path="/new" element={<Private editor><Editor /></Private>} />
+      <Route path="/s/:slug/practice" element={<Private><Practice /></Private>} />
+      <Route path="/s/:slug/stats" element={<Private editor><AuthorStats kind="set" /></Private>} />
+
+      <Route path="/c/:slug" element={<Private><CourseView /></Private>} />
+      <Route path="/c/:slug/edit" element={<Private editor><CourseEditor /></Private>} />
+      <Route path="/c/:slug/stats" element={<Private editor><AuthorStats kind="course" /></Private>} />
+      <Route path="/new/course" element={<Private editor><CourseEditor /></Private>} />
+      <Route path="/n/:id" element={<Private><NodeView /></Private>} />
+      <Route path="/n/:id/edit" element={<Private editor><NodeEditor /></Private>} />
+      <Route path="/n/:id/lesson" element={<Private><Lesson /></Private>} />
+      <Route path="/reports" element={<Private editor><Reports /></Private>} />
 
       <Route path="/admin" element={<Private owner><Admin /></Private>} />
 

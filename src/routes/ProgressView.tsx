@@ -182,7 +182,7 @@ export function ProgressView() {
                   const score = percent(run.correct, run.total)
                   return (
                     <Link
-                      to={`/s/${run.slug}`}
+                      to={run.link ?? `/s/${run.slug}`}
                       className="cardrow"
                       key={`${run.at}-${index}`}
                       style={{ alignItems: 'center' }}
@@ -218,7 +218,11 @@ export function ProgressView() {
                             ? t('progress.modeChoice')
                             : run.mode === 'write'
                               ? t('progress.modeWrite')
-                              : t('progress.modeFlashcards')}{' '}
+                              : run.mode === 'mixed'
+                                ? t('progress.modeMixed')
+                                : run.mode === 'lesson'
+                                  ? t('progress.modeLesson')
+                                  : t('progress.modeFlashcards')}{' '}
                           · {run.correct}/{run.total} · {relative(run.at)}
                         </div>
                       </div>

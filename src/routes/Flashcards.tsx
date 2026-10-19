@@ -5,10 +5,11 @@ import { useToast } from '../lib/toast'
 import { useI18n } from '../lib/i18n'
 import { errorText } from '../lib/errors'
 import { haptics } from '../lib/haptics'
-import { answerLang, buildRound, isDeckCleared, promptLang, requeue } from '../lib/study'
-import type { Card, Direction, ProgressUpdate, StudySet } from '../lib/types'
-import { readShow } from '../lib/display'
+import { buildRound, isDeckCleared, requeue, stateOf } from '../lib/study'
+import type { Card, ProgressUpdate, StudySet } from '../lib/types'
+import { dirKey, nameOf, parseDir, usableCards, variantsOf } from '../lib/variants'
 import { Shell, TopBar } from '../components/Shell'
+import { FlagButton } from '../components/FlagButton'
 import { Bar, Empty, Spinner } from '../components/Bits'
 import { Icon } from '../components/Icon'
 import { Sheet } from '../components/Sheet'
@@ -25,17 +26,14 @@ export function Flashcards() {
   const toast = useToast()
   const { t } = useI18n()
 
-  const dir: Direction = params.get('dir') === 'ba' ? 'ba' : 'ab'
+  const { front, back } = parseDir(params.get('dir'))
+  const dir = dirKey(front, back)
 
   const [set, setSet] = useState<StudySet | null>(null)
   const [cards, setCards] = useState<Card[]>([])
   const [queue, setQueue] = useState<Card[]>([])
   const [done, setDone] = useState(false)
   const [verb, setVerb] = useState<Card | null>(null)
-
-  // Set once per round: changing what is shown mid-deck would make the cards
-  // already swiped incomparable with the ones still to come.
-  const [show] = useState(() => readShow(slug))
 
   const deck = useRef<DeckHandle | null>(null)
   const pending = useRef<ProgressUpdate[]>([])
@@ -82,8 +80,11 @@ export function Flashcards() {
           return
         }
         setSet(result)
-        setCards(result.cards)
-        setQueue(buildRound(result.cards, dir))
+        // Only the cards that have both sides of this pair, minus anything
+        // this reader hid with a report.
+        const usable = usableCards(result.cards, front, back, variantsOf(result), result.hidden)
+        setCards(usable)
+        setQueue(buildRound(usable, dir))
         resetRound()
       })
       .catch((caught: unknown) => {
@@ -97,6 +98,13 @@ export function Flashcards() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, dir])
+
+  /** A card reported and hidden leaves the round there and then. */
+  const drop = (item: string) => {
+    const id = Number(item.slice(2))
+    setCards((current) => current.filter((card) => card.id !== id))
+    setQueue((current) => current.filter((card) => card.id !== id))
+  }
 
   // Whatever is still unsent when leaving the screen goes out now.
   useEffect(() => () => void flush(), [flush])
@@ -155,7 +163,7 @@ export function Flashcards() {
 
   const cleared = useMemo(() => isDeckCleared(cards, dir), [cards, dir])
   const knownCount = useMemo(
-    () => cards.filter((card) => card.state[dir] === 'known').length,
+    () => cards.filter((card) => stateOf(card, dir) === 'known').length,
     [cards, dir],
   )
 
@@ -167,12 +175,18 @@ export function Flashcards() {
     )
   }
 
+  const variants = variantsOf(set)
+  const promptLabel = nameOf(variants, front)
+  const answerLabel = nameOf(variants, back)
+
   if (cards.length === 0) {
     return (
       <Shell>
         <TopBar back={`/s/${slug}`} title={set.title} />
         <Empty icon="cards" title={t('cards.nothingTitle')}>
-          {t('cards.nothingBody')}
+          {set.cards.length > 0
+            ? t('cards.nothingPair', { front: promptLabel, back: answerLabel })
+            : t('cards.nothingBody')}
         </Empty>
       </Shell>
     )
@@ -217,7 +231,7 @@ export function Flashcards() {
               <button
                 type="button"
                 className="btn btn--primary btn--lg btn--block"
-                onClick={() => navigate(`/s/${slug}/test?dir=${dir}`)}
+                onClick={() => navigate(`/s/${slug}/test?dir=${encodeURIComponent(dir)}`)}
               >
                 <Icon name="trophy" />
                 {t('cards.takeTheTest')}
@@ -255,10 +269,12 @@ export function Flashcards() {
         back={`/s/${slug}`}
         title={set.title}
         actions={
-          <span className="chip">
-            {promptLang(set, dir)} <Icon name="arrowRight" width={11} height={11} />{' '}
-            {answerLang(set, dir)}
-          </span>
+          <>
+            <span className="chip truncate">
+              {promptLabel} <Icon name="arrowRight" width={11} height={11} /> {answerLabel}
+            </span>
+            <FlagButton item={queue[0] ? `c:${queue[0].id}` : null} onHidden={drop} />
+          </>
         }
       />
 
@@ -277,10 +293,10 @@ export function Flashcards() {
 
       <SwipeDeck
         queue={queue}
-        dir={dir}
-        promptLabel={promptLang(set, dir)}
-        answerLabel={answerLang(set, dir)}
-        show={show}
+        front={front}
+        back={back}
+        promptLabel={promptLabel}
+        answerLabel={answerLabel}
         onVerdict={onVerdict}
         onConjugation={setVerb}
         handle={deck}

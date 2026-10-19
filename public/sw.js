@@ -33,10 +33,11 @@ const PRECACHE = []
 
 const SHELL_CACHE = `sziglet-shell-${VERSION}`
 const ASSET_CACHE = `sziglet-assets-${VERSION}`
-// Versioned: responses cached before cards carried grammar, or before sets
-// carried per-direction test results, are a different shape. The activate
-// handler sweeps any sziglet-* cache that is not one of these three.
-const API_CACHE = 'sziglet-api-v2'
+// Versioned: responses cached before cards carried grammar, before sets
+// carried per-direction test results, or before variations and question sets,
+// are a different shape. The activate handler sweeps any sziglet-* cache that
+// is not one of these three.
+const API_CACHE = 'sziglet-api-v3'
 
 const SHELL_FILES = [
   '/',
@@ -147,6 +148,8 @@ async function networkFirst(request, cacheName, fallback) {
 function isCacheableApi(pathname) {
   return (
     pathname.startsWith('/api/sets') ||
+    pathname.startsWith('/api/courses') ||
+    pathname.startsWith('/api/nodes') ||
     pathname === '/api/me/stats' ||
     pathname === '/api/auth/me'
   )

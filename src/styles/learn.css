@@ -1,0 +1,966 @@
+/*
+ * Courses, lessons, questions and the editors for them.
+ *
+ * Built from the same tokens as everything else: the path and the lesson
+ * screens are new shapes, not a new look.
+ */
+
+/* ── Small shared pieces ────────────────────────────────────────────────── */
+
+.icon-btn--sm {
+  width: 2rem;
+  height: 2rem;
+}
+
+.icon-btn--sm svg {
+  width: 16px;
+  height: 16px;
+}
+
+.icon-btn--on {
+  background: var(--accent-dim);
+  color: var(--accent-soft);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.input--mono {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.input--num {
+  width: 4.5rem;
+  flex: none;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A title field that reads as a heading until it is focused. */
+.input--bare {
+  min-height: 2.25rem;
+  padding: 0 0.4rem;
+  background: transparent;
+  border-color: transparent;
+  font-weight: 620;
+}
+
+.input--bare:hover {
+  border-color: var(--line);
+}
+
+.chip__x {
+  display: inline-grid;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  margin-right: -0.2rem;
+  border-radius: var(--r-full);
+  color: inherit;
+  opacity: 0.7;
+}
+
+.chip__x:hover {
+  opacity: 1;
+  background: var(--surface-3);
+}
+
+.select--chip {
+  min-height: 1.75rem;
+  border-radius: var(--r-full);
+  font-size: 0.75rem;
+}
+
+.disclosure {
+  width: 100%;
+  padding: 0.2rem 0;
+  color: var(--ink-faint);
+}
+
+.linkish {
+  color: var(--accent-soft);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.cardrow--link {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+}
+
+.cardrow--link:hover {
+  background: var(--surface-2);
+}
+
+.pickerlist {
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+/* A big tappable option: the "new …" menu, the part picker. */
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.8rem 0.9rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  text-align: left;
+  transition: background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+
+.choice:hover {
+  background: var(--surface-3);
+}
+
+.choice:active {
+  transform: scale(0.98);
+}
+
+.choice strong {
+  display: block;
+  font-weight: 620;
+}
+
+.choice .tiny {
+  display: block;
+  margin-top: 0.1rem;
+}
+
+.result__badge {
+  display: grid;
+  place-items: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: var(--r-full);
+  background: var(--accent-dim);
+  color: var(--accent);
+  animation: pop 420ms var(--ease-spring) both;
+}
+
+.result__badge--rehearse {
+  background: var(--rehearse-dim);
+  color: var(--rehearse);
+}
+
+.result__badge--known {
+  background: var(--known-dim);
+  color: var(--known);
+}
+
+.ring__label {
+  color: var(--ink-muted);
+}
+
+/* ── Variation picker ───────────────────────────────────────────────────── */
+
+.pairpick {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.pairpick .select {
+  width: 100%;
+  min-height: 2.75rem;
+  font-size: 0.875rem;
+}
+
+.pairpick__swap {
+  margin-bottom: 0.15rem;
+}
+
+/* ── Written answers ────────────────────────────────────────────────────── */
+
+.answerbox--compact .input {
+  min-height: 2.75rem;
+  font-size: 1rem;
+}
+
+.answerbox--compact .verdict {
+  padding: 0.55rem 0.7rem;
+  font-size: 0.8125rem;
+}
+
+.marksline {
+  text-align: center;
+  animation: fade-up var(--t-base) var(--ease) both;
+}
+
+.marks {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+}
+
+.marks__wrong {
+  color: var(--wrong);
+  background: var(--wrong-dim);
+  border-radius: 3px;
+  text-decoration: underline wavy;
+  text-underline-offset: 3px;
+}
+
+.marks__accent {
+  color: var(--rehearse);
+  background: var(--rehearse-dim);
+  border-radius: 3px;
+}
+
+.marks__missing {
+  display: inline-block;
+  width: 0.4em;
+  color: var(--wrong);
+  font-weight: 700;
+  transform: translateY(0.15em);
+}
+
+/* ── The card editor ────────────────────────────────────────────────────── */
+
+.editcard {
+  padding: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.editcard--verb {
+  border-color: var(--accent-line);
+}
+
+.editcard__top {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: -0.2rem -0.2rem 0.1rem 0.2rem;
+}
+
+.vfields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.5rem;
+  align-items: end;
+}
+
+/* Every field says which variation it is; the × to remove it shows on hover. */
+.vfield {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.vfield__label {
+  padding-right: 1.4rem;
+  font-size: 0.6875rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+}
+
+.vfield .input {
+  min-height: 2.6rem;
+  font-size: 0.9375rem;
+}
+
+.vfield__x {
+  position: absolute;
+  top: -0.1rem;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: var(--r-full);
+  color: var(--ink-faint);
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+
+.vfield:hover .vfield__x,
+.vfield:focus-within .vfield__x,
+.vfield__x:focus-visible {
+  opacity: 1;
+}
+
+.vfield__x:hover {
+  background: var(--wrong-dim);
+  color: var(--wrong);
+}
+
+/* No hover on a touch screen: keep the × faintly visible instead. */
+@media (hover: none) {
+  .vfield__x {
+    opacity: 0.55;
+  }
+}
+
+.fieldadd {
+  position: relative;
+  align-self: end;
+  justify-self: start;
+}
+
+.fieldadd__btn {
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--ink-faint);
+  transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+
+.fieldadd__btn:hover,
+.fieldadd__btn[aria-expanded='true'] {
+  color: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+.menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  width: min(16rem, 80vw);
+  max-height: 20rem;
+  overflow-y: auto;
+  padding: 0.35rem;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  animation: fade-up var(--t-fast) var(--ease) both;
+}
+
+.menu__head {
+  padding: 0.45rem 0.55rem 0.2rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.menu__item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.5rem 0.55rem;
+  border-radius: var(--r-sm);
+  font-size: 0.875rem;
+  text-align: left;
+}
+
+.menu__item:hover {
+  background: var(--surface-2);
+}
+
+.menu__sep {
+  height: 1px;
+  margin: 0.3rem 0;
+  background: var(--line);
+}
+
+.menu__custom {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.35rem;
+}
+
+.menu__custom .input {
+  min-height: 2.4rem;
+  font-size: 0.875rem;
+}
+
+.variantrow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.5rem;
+}
+
+.variantrow .input {
+  min-height: 2.25rem;
+  font-size: 0.875rem;
+}
+
+.variantrow__default {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+}
+
+.variantrow__default input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+}
+
+/* ── Questions ──────────────────────────────────────────────────────────── */
+
+.qform {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.qform textarea {
+  resize: vertical;
+  min-height: 3.5rem;
+  line-height: 1.45;
+}
+
+.answerrow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.answerrow .input {
+  min-height: 2.4rem;
+  font-size: 0.9375rem;
+}
+
+.answerrow__mark {
+  display: grid;
+  place-items: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  transition: background var(--t-fast) var(--ease);
+}
+
+.answerrow__mark--right {
+  background: var(--known-dim);
+  color: var(--known);
+}
+
+.answerrow__mark--wrong {
+  background: var(--wrong-dim);
+  color: var(--wrong);
+}
+
+.importrow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.6rem 0.875rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-size: 0.875rem;
+}
+
+.importrow:last-child {
+  border-bottom: 0;
+}
+
+.importrow--right {
+  color: var(--known);
+}
+
+.importrow--wrong {
+  color: var(--wrong);
+}
+
+.importrow--skip {
+  color: var(--ink-faint);
+  text-decoration: line-through;
+}
+
+/* ── The course path ────────────────────────────────────────────────────── */
+
+.setcard--course {
+  border-color: var(--accent-line);
+}
+
+.path {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.1rem;
+  padding: 0.5rem 0 1rem;
+  list-style: none;
+}
+
+.path__step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  transform: translateX(var(--offset, 0));
+  animation: fade-up var(--t-slow) var(--ease) both;
+}
+
+.node {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-full);
+  transition: transform var(--t-fast) var(--ease-spring);
+}
+
+.node:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.node__icon {
+  position: absolute;
+  inset: 9px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  color: var(--ink-muted);
+  box-shadow: var(--shadow-md);
+}
+
+.node--next .node__icon {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+  box-shadow: 0 8px 22px -8px var(--accent-line);
+}
+
+.node--done .node__icon {
+  background: var(--known-dim);
+  border-color: transparent;
+  color: var(--known);
+}
+
+.node--locked .node__icon {
+  opacity: 0.55;
+}
+
+.node__title {
+  max-width: 12rem;
+  font-size: 0.8125rem;
+  font-weight: 620;
+  text-align: center;
+}
+
+.node__start {
+  position: absolute;
+  top: -0.6rem;
+  animation: pop var(--t-slow) var(--ease-spring) both;
+}
+
+/* ── A node's steps ─────────────────────────────────────────────────────── */
+
+.steps--sub {
+  list-style: none;
+}
+
+.substep {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 0.875rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.substep--current {
+  border-color: var(--accent-line);
+}
+
+.substep__num {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex: none;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+
+.substep--done .substep__num {
+  background: var(--known-dim);
+  border-color: transparent;
+  color: var(--known);
+}
+
+.substep--current .substep__num {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+
+.substep__title {
+  font-weight: 600;
+}
+
+/* ── The node editor ────────────────────────────────────────────────────── */
+
+.subcard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xl);
+  background: var(--bg);
+}
+
+.subcard__head {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.partcard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.partcard__head {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.partcard__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.5rem;
+}
+
+.partcard__grid .select {
+  width: 100%;
+  min-height: 2.5rem;
+}
+
+.qref {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.kindpick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+/* ── Lessons ────────────────────────────────────────────────────────────── */
+
+.lesson__top {
+  gap: 0.6rem;
+}
+
+.lesson__top .bar {
+  height: 0.65rem;
+}
+
+.lesson__again {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--rehearse);
+  font-weight: 600;
+}
+
+.lesson__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  animation: fade-up var(--t-base) var(--ease) both;
+}
+
+.lesson__kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9375rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* The verdict and the way on, pinned where the thumb is. */
+.lesson__foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 1rem calc(var(--gutter) * -1) 0;
+  padding: 0.9rem var(--gutter) calc(var(--safe-bottom) + 0.9rem);
+  border-top: 1px solid var(--line);
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: sheet-up var(--t-base) var(--ease) both;
+}
+
+.lesson__foot--right {
+  background: color-mix(in srgb, var(--known-dim) 70%, var(--surface));
+}
+
+.lesson__foot--wrong {
+  background: color-mix(in srgb, var(--wrong-dim) 70%, var(--surface));
+}
+
+.lesson__verdict {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 1.0625rem;
+  font-weight: 700;
+}
+
+.lesson__foot--right .lesson__verdict {
+  color: var(--known);
+}
+
+.lesson__foot--wrong .lesson__verdict {
+  color: var(--wrong);
+}
+
+.intro {
+  border-color: var(--accent-line);
+}
+
+.intro .flashcard__lang {
+  position: static;
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+.intro__line {
+  width: 3rem;
+  height: 1px;
+  margin: 1rem auto;
+  background: var(--line-strong);
+}
+
+.quiz__term--answer {
+  color: var(--accent-soft);
+}
+
+.quiz__prompt--text {
+  place-items: center start;
+  text-align: left;
+  min-height: 5rem;
+}
+
+.qbody {
+  font-size: clamp(1.1rem, 4.6vw, 1.35rem);
+  font-weight: 560;
+  line-height: 1.55;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.gap {
+  display: inline-block;
+  min-width: 3.5em;
+  margin: 0 0.15em;
+  padding: 0 0.35em;
+  border-bottom: 2px solid var(--line-strong);
+  color: var(--ink-faint);
+  text-align: center;
+  transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+
+.gap--filled {
+  border-color: var(--accent);
+  color: var(--accent-soft);
+}
+
+.gap--right {
+  border-color: var(--known);
+  color: var(--known);
+}
+
+.gap--wrong {
+  border-color: var(--wrong);
+  color: var(--wrong);
+}
+
+/* Matching pairs: two columns of tiles. */
+.match {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.match__col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tile {
+  min-height: 3.25rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 3px;
+  border-radius: var(--r-md);
+  font-size: 0.9375rem;
+  font-weight: 580;
+  overflow-wrap: anywhere;
+  transition: transform var(--t-fast) var(--ease), background var(--t-base) var(--ease),
+    border-color var(--t-base) var(--ease), opacity var(--t-base) var(--ease);
+}
+
+.tile:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.tile--selected {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent-soft);
+}
+
+.tile--done {
+  background: var(--known-dim);
+  border-color: transparent;
+  color: var(--known);
+  opacity: 0.55;
+}
+
+.tile--wrong {
+  background: var(--wrong-dim);
+  border-color: var(--wrong);
+  color: var(--wrong);
+  animation: nudge 260ms var(--ease);
+}
+
+.tile--chip {
+  min-height: 2.6rem;
+}
+
+.tile--used {
+  opacity: 0.3;
+}
+
+.writerow {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.writerow__prompt {
+  font-size: 1.0625rem;
+  font-weight: 620;
+}
+
+/* Side by side: questions with slots, and a pool of answers under them. */
+.compare__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%;
+  padding: 0.75rem 0.875rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  text-align: left;
+}
+
+.compare__slot {
+  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+
+.compare__slot--active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.compare__item .qbody {
+  font-size: 1.0625rem;
+}
+
+.pool {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+  margin: 0.4rem 0;
+}
+
+/* ── Reports and statistics ─────────────────────────────────────────────── */
+
+.reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line-strong);
+  color: var(--ink-muted);
+  list-style: none;
+}
+
+.meter {
+  position: relative;
+  width: 4rem;
+  height: 0.4rem;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--r-full);
+  background: var(--surface-3);
+}
+
+.meter__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.meter__fill--wrong {
+  background: var(--wrong);
+}
+
+.statrow {
+  flex-wrap: wrap;
+}
+
+.statrow__nums {
+  width: 100%;
+}
+
+@media (min-width: 30rem) {
+  .statrow {
+    flex-wrap: nowrap;
+  }
+  .statrow__nums {
+    width: auto;
+  }
+}

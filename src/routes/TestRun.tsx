@@ -5,72 +5,66 @@ import { useToast } from '../lib/toast'
 import { useI18n } from '../lib/i18n'
 import { errorText } from '../lib/errors'
 import { haptics } from '../lib/haptics'
-import {
-  answerLang,
-  answerSide,
-  buildChoiceQuestion,
-  MIN_CHOICE_CARDS,
-  promptLang,
-  promptSide,
-  shuffle,
-} from '../lib/study'
-import { displayAnswer, grade, type Grade } from '../lib/text'
+import { buildChoiceQuestion, MIN_CHOICE_CARDS, shuffle } from '../lib/study'
+import { displayAnswer } from '../lib/text'
 import { percent } from '../lib/format'
-import { readShow } from '../lib/display'
-import { alsoAccepted, answerKey, hasConjugation, parts, promptKey } from '../lib/word'
-import type { Card, Direction, ProgressUpdate, StudySet, TestMode } from '../lib/types'
+import { hasConjugation } from '../lib/word'
+import {
+  alsoAccepted,
+  dirKey,
+  field,
+  genderOf,
+  nameOf,
+  parseDir,
+  preferred,
+  usableCards,
+  variantsOf,
+} from '../lib/variants'
+import type { Card, ProgressUpdate, StudySet, TestMode } from '../lib/types'
 import { Shell, TopBar } from '../components/Shell'
 import { Bar, Empty, Segmented, Spinner } from '../components/Bits'
 import { Icon } from '../components/Icon'
 import { Sheet } from '../components/Sheet'
 import { Conjugation } from '../components/Conjugation'
 import { Word } from '../components/Word'
+import { Options, WrittenAnswer } from '../components/Answer'
+import { FlagButton } from '../components/FlagButton'
 
 type Phase = 'setup' | 'running' | 'roundEnd' | 'done'
 
-type Answered = { grade: Grade; typed?: string; chosen?: number }
-
-const OPTION_KEYS = ['A', 'B', 'C', 'D']
+type Asked = 'choice' | 'write'
 
 export function TestRun() {
   const { slug = '' } = useParams()
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const toast = useToast()
-  const { t, tx, duration } = useI18n()
+  const { t, duration } = useI18n()
 
-  const dir: Direction = params.get('dir') === 'ba' ? 'ba' : 'ab'
+  const { front, back } = parseDir(params.get('dir'))
+  const dir = dirKey(front, back)
 
   const [set, setSet] = useState<StudySet | null>(null)
+  const [cards, setCards] = useState<Card[]>([])
   const [mode, setMode] = useState<TestMode>('choice')
   const [phase, setPhase] = useState<Phase>('setup')
+  const [advanced, setAdvanced] = useState(false)
+  const [limit, setLimit] = useState(0)
 
   const [queue, setQueue] = useState<Card[]>([])
+  /** In a mixed test, how each card is asked this round. */
+  const [asks, setAsks] = useState<Map<number, Asked>>(new Map())
   const [index, setIndex] = useState(0)
   const [round, setRound] = useState(1)
   const [missed, setMissed] = useState<Card[]>([])
   const [stumbled, setStumbled] = useState<Card[]>([])
-
-  const [typed, setTyped] = useState('')
-  const [answered, setAnswered] = useState<Answered | null>(null)
+  const [answer, setAnswer] = useState<{ right: boolean; chosen?: number } | null>(null)
   const [verb, setVerb] = useState<Card | null>(null)
-
-  const [show] = useState(() => readShow(slug))
-
   const [firstPass, setFirstPass] = useState({ total: 0, correct: 0 })
+  const [partial, setPartial] = useState(false)
 
   const pending = useRef<ProgressUpdate[]>([])
   const startedAt = useRef(Date.now())
-
-  /**
-   * Near misses already forgiven, per card.
-   *
-   * A spelling nudge that can be collected over and over is a trap: type the
-   * same almost-right word twice and the test never moves on, with nothing on
-   * screen offering a way out. One nudge per card, then it counts as wrong.
-   */
-  const nudges = useRef(new Map<number, number>())
-  const answerInput = useRef<HTMLInputElement>(null)
   const advanceTimer = useRef<number | undefined>(undefined)
 
   // ── Loading ───────────────────────────────────────────────────────────────
@@ -83,8 +77,11 @@ export function TestRun() {
         if (cancelled) {
           return
         }
+        const usable = usableCards(result.cards, front, back, variantsOf(result), result.hidden)
         setSet(result)
-        setMode(result.cards.length >= MIN_CHOICE_CARDS ? 'choice' : 'write')
+        setCards(usable)
+        setLimit(usable.length)
+        setMode(usable.length >= MIN_CHOICE_CARDS ? 'choice' : 'write')
       })
       .catch((caught: unknown) => {
         if (!cancelled) {
@@ -96,7 +93,7 @@ export function TestRun() {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug])
+  }, [slug, dir])
 
   useEffect(() => () => window.clearTimeout(advanceTimer.current), [])
 
@@ -115,32 +112,35 @@ export function TestRun() {
 
   useEffect(() => () => void flush(), [flush])
 
-  // ── Question for the current card ─────────────────────────────────────────
-
+  const variants = useMemo(() => (set ? variantsOf(set) : []), [set])
   const card = queue[index]
+  const asked: Asked = mode === 'mixed' ? (card ? asks.get(card.id) ?? 'choice' : 'choice') : mode
 
   const question = useMemo(() => {
-    if (!card || !set || mode !== 'choice') {
+    if (!card || asked !== 'choice') {
       return null
     }
-    return buildChoiceQuestion(card, set.cards, dir)
+    return buildChoiceQuestion(card, cards, front, back)
     // A fresh set of distractors per card, per round.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, set, dir, mode, round])
+  }, [card, cards, front, back, asked, round])
+
+  /** Mixed tests ask roughly half the cards each way, freshly per round. */
+  const deal = (list: Card[]) =>
+    new Map(list.map((item) => [item.id, (Math.random() < 0.5 ? 'choice' : 'write') as Asked]))
 
   const start = () => {
-    if (!set) {
-      return
-    }
-    setQueue(shuffle(set.cards))
+    const count = Math.max(1, Math.min(limit || cards.length, cards.length))
+    const picked = shuffle(cards).slice(0, count)
+    setQueue(picked)
+    setAsks(deal(picked))
+    setPartial(count < cards.length)
     setIndex(0)
     setRound(1)
     setMissed([])
     setStumbled([])
-    setAnswered(null)
-    setTyped('')
+    setAnswer(null)
     setFirstPass({ total: 0, correct: 0 })
-    nudges.current = new Map()
     startedAt.current = Date.now()
     setPhase('running')
   }
@@ -148,140 +148,87 @@ export function TestRun() {
   /** Moves to the next card, or ends the round. */
   const advance = useCallback(() => {
     window.clearTimeout(advanceTimer.current)
-    setAnswered(null)
-    setTyped('')
-
+    setAnswer(null)
     if (index + 1 < queue.length) {
       setIndex(index + 1)
-      window.setTimeout(() => answerInput.current?.focus(), 60)
       return
     }
     setPhase(missed.length > 0 ? 'roundEnd' : 'done')
   }, [index, queue.length, missed.length])
 
-  const register = useCallback(
-    (result: Grade, record: Omit<Answered, 'grade'> = {}) => {
-      if (!card) {
-        return
-      }
-      const right = result === 'correct' || result === 'accent'
-
-      if (right) {
-        haptics.known()
-        pending.current.push({ cardId: card.id, state: 'known', right: true })
-      } else {
-        haptics.wrong()
-        pending.current.push({ cardId: card.id, state: 'rehearse', wrong: true })
-        setMissed((current) =>
-          current.some((item) => item.id === card.id) ? current : [...current, card],
-        )
-        setStumbled((current) =>
-          current.some((item) => item.id === card.id) ? current : [...current, card],
-        )
-      }
-
-      if (round === 1) {
-        setFirstPass((current) => ({
-          total: current.total + 1,
-          correct: current.correct + (right ? 1 : 0),
-        }))
-      }
-
-      if (pending.current.length >= 8) {
-        void flush()
-      }
-
-      setAnswered({ grade: result, ...record })
-
-      // Right answers move on by themselves; wrong ones wait so the correct
-      // answer, and any note on the card, can actually be read.
-      if (right && mode === 'choice' && !card.note) {
-        advanceTimer.current = window.setTimeout(advance, 620)
-      }
-    },
-    [card, round, flush, mode, advance],
-  )
-
-  const choose = (optionIndex: number) => {
-    if (!question || answered) {
-      return
-    }
-    const correct = optionIndex === question.correctIndex
-    register(correct ? 'correct' : 'wrong', { chosen: optionIndex })
-  }
-
-  const retryWritten = useCallback(() => {
-    setAnswered(null)
-    setTyped('')
-    answerInput.current?.focus()
-  }, [])
-
-  const submitWritten = (event: React.FormEvent) => {
-    event.preventDefault()
+  const register = (right: boolean, chosen?: number) => {
     if (!card) {
       return
     }
+    if (right) {
+      pending.current.push({ cardId: card.id, state: 'known', right: true })
+    } else {
+      pending.current.push({ cardId: card.id, state: 'rehearse', wrong: true })
+      setMissed((current) => (current.some((item) => item.id === card.id) ? current : [...current, card]))
+      setStumbled((current) => (current.some((item) => item.id === card.id) ? current : [...current, card]))
+    }
+    if (round === 1) {
+      setFirstPass((current) => ({ total: current.total + 1, correct: current.correct + (right ? 1 : 0) }))
+    }
+    if (pending.current.length >= 8) {
+      void flush()
+    }
+    setAnswer({ right, chosen })
 
-    // "Almost" leaves the field live so the word can be typed again, and
-    // Enter has to do what the Try again button does — otherwise the only way
-    // on from a near miss was to reach for the button.
-    if (answered?.grade === 'close') {
-      retryWritten()
+    // Right answers move on by themselves; wrong ones wait so the correct
+    // answer, and any note on the card, can actually be read.
+    if (right && asked === 'choice' && !card.note) {
+      advanceTimer.current = window.setTimeout(advance, 620)
+    }
+  }
+
+  const choose = (optionIndex: number, right: boolean) => {
+    if (answer) {
       return
     }
-    if (answered) {
-      return
-    }
-
-    const verdict = grade(typed, answerSide(card, dir), alsoAccepted(card, answerKey(dir)))
-
-    // "Almost" is a spelling nudge, not a mistake: offer the same card again —
-    // but only once, so there is no loop to get stuck in.
-    if (verdict === 'close' && (nudges.current.get(card.id) ?? 0) === 0) {
-      nudges.current.set(card.id, 1)
-      haptics.tap()
-      setAnswered({ grade: 'close', typed })
-      return
-    }
-    register(verdict === 'close' ? 'wrong' : verdict, { typed })
+    right ? haptics.known() : haptics.wrong()
+    register(right, optionIndex)
   }
 
   const nextRound = () => {
-    setQueue(shuffle(missed))
+    const again = shuffle(missed)
+    setQueue(again)
+    setAsks(deal(again))
     setMissed([])
     setIndex(0)
     setRound((value) => value + 1)
-    setAnswered(null)
-    setTyped('')
+    setAnswer(null)
     setPhase('running')
   }
 
-  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  /** A card reported and hidden leaves the test there and then. */
+  const drop = (item: string) => {
+    const id = Number(item.slice(2))
+    setCards((current) => current.filter((other) => other.id !== id))
+    setMissed((current) => current.filter((other) => other.id !== id))
+    if (queue.length <= 1) {
+      setPhase(missed.filter((other) => other.id !== id).length > 0 ? 'roundEnd' : 'done')
+      return
+    }
+    setQueue((current) => current.filter((other) => other.id !== id))
+    setAnswer(null)
+    setIndex((current) => Math.min(current, queue.length - 2))
+  }
 
+  // Enter or space moves on once a multiple-choice answer is in.
   useEffect(() => {
-    if (phase !== 'running' || mode !== 'choice') {
+    if (phase !== 'running' || asked !== 'choice' || !answer) {
       return
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (answered) {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          advance()
-        }
-        return
-      }
-      const position = '1234'.indexOf(event.key)
-      const letter = 'abcd'.indexOf(event.key.toLowerCase())
-      const pick = position >= 0 ? position : letter
-      if (pick >= 0 && question && pick < question.options.length) {
+      if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault()
-        choose(pick)
+        advance()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, mode, answered, question, advance])
+  }, [phase, asked, answer, advance])
 
   // ── Finishing ─────────────────────────────────────────────────────────────
 
@@ -301,10 +248,11 @@ export function TestRun() {
           total: firstPass.total,
           correct: firstPass.correct,
           durationMs: Date.now() - startedAt.current,
+          partial,
         })
         .catch(() => undefined),
     )
-  }, [phase, set, dir, mode, firstPass, flush])
+  }, [phase, set, dir, mode, firstPass, flush, partial])
 
   // ── Rendering ─────────────────────────────────────────────────────────────
 
@@ -316,21 +264,24 @@ export function TestRun() {
     )
   }
 
-  if (set.cards.length === 0) {
+  const fromLabel = nameOf(variants, front)
+  const toLabel = nameOf(variants, back)
+
+  if (cards.length === 0 && phase === 'setup') {
     return (
       <Shell>
         <TopBar back={`/s/${slug}`} title={set.title} />
         <Empty icon="cards" title={t('test.nothingTitle')}>
-          {t('test.nothingBody')}
+          {set.cards.length > 0
+            ? t('cards.nothingPair', { front: fromLabel, back: toLabel })
+            : t('test.nothingBody')}
         </Empty>
       </Shell>
     )
   }
 
-  const fromLabel = promptLang(set, dir)
-  const toLabel = answerLang(set, dir)
-
   if (phase === 'setup') {
+    const choiceOk = cards.length >= MIN_CHOICE_CARDS
     return (
       <Shell>
         <TopBar back={`/s/${slug}`} title={t('test.title')} />
@@ -339,7 +290,7 @@ export function TestRun() {
             <h1 className="sethead__title">{t('test.setupTitle')}</h1>
             <p className="muted small" style={{ marginTop: '0.4rem' }}>
               {t('test.setupBody', {
-                cards: t('set.cards', { n: set.cards.length }),
+                cards: t('set.cards', { n: cards.length }),
                 from: fromLabel,
                 to: toLabel,
               })}
@@ -353,28 +304,73 @@ export function TestRun() {
             options={[
               { value: 'choice', label: t('test.choice') },
               { value: 'write', label: t('test.write') },
+              { value: 'mixed', label: t('test.mixed') },
             ]}
           />
 
           <div className="panel row" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
             <Icon
-              name={mode === 'choice' ? 'list' : 'keyboard'}
+              name={mode === 'choice' ? 'list' : mode === 'write' ? 'keyboard' : 'layers'}
               style={{ color: 'var(--accent)', flex: 'none' }}
             />
             <p className="small grow">
-              {mode === 'choice' ? t('test.choiceHint') : t('test.writeHint')}
+              {mode === 'choice' ? t('test.choiceHint') : mode === 'write' ? t('test.writeHint') : t('test.mixedHint')}
             </p>
           </div>
 
-          {set.cards.length < MIN_CHOICE_CARDS && mode === 'choice' && (
+          {!choiceOk && mode !== 'write' && (
             <p className="field__error small">{t('test.needCards', { n: MIN_CHOICE_CARDS })}</p>
           )}
+
+          <div className="stack" style={{ '--gap': '0.6rem' } as React.CSSProperties}>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              style={{ alignSelf: 'flex-start' }}
+              aria-expanded={advanced}
+              onClick={() => setAdvanced((value) => !value)}
+            >
+              <Icon name="settings" />
+              {t('test.advanced')}
+              <Icon name="chevronDown" style={{ transform: advanced ? 'rotate(180deg)' : undefined }} />
+            </button>
+            {advanced && (
+              <div className="panel stack" style={{ '--gap': '0.5rem' } as React.CSSProperties}>
+                <label className="field">
+                  <span className="field__label">{t('test.howMany')}</span>
+                  <div className="row" style={{ '--gap': '0.75rem' } as React.CSSProperties}>
+                    <input
+                      type="range"
+                      className="grow"
+                      min={1}
+                      max={cards.length}
+                      value={limit}
+                      onChange={(event) => setLimit(Number(event.target.value))}
+                    />
+                    <input
+                      type="number"
+                      className="input input--num"
+                      min={1}
+                      max={cards.length}
+                      value={limit}
+                      onChange={(event) =>
+                        setLimit(Math.max(1, Math.min(cards.length, Number(event.target.value) || 1)))
+                      }
+                    />
+                  </div>
+                </label>
+                <p className="field__hint">
+                  {limit < cards.length ? t('test.partialHint') : t('test.allHint', { n: cards.length })}
+                </p>
+              </div>
+            )}
+          </div>
 
           <button
             type="button"
             className="btn btn--primary btn--lg btn--block"
             onClick={start}
-            disabled={mode === 'choice' && set.cards.length < MIN_CHOICE_CARDS}
+            disabled={mode !== 'write' && !choiceOk}
           >
             <Icon name="play" />
             {t('test.start')}
@@ -389,18 +385,7 @@ export function TestRun() {
       <Shell>
         <TopBar back={`/s/${slug}`} title={t('test.round', { n: round })} />
         <div className="result">
-          <div
-            style={{
-              display: 'grid',
-              placeItems: 'center',
-              width: '4.5rem',
-              height: '4.5rem',
-              borderRadius: '999px',
-              background: 'var(--rehearse-dim)',
-              color: 'var(--rehearse)',
-              animation: 'pop 420ms var(--ease-spring) both',
-            }}
-          >
+          <div className="result__badge result__badge--rehearse">
             <Icon name="rotate" width={28} height={28} />
           </div>
           <div>
@@ -414,15 +399,19 @@ export function TestRun() {
             {missed.map((item) => (
               <div className="cardrow" key={item.id}>
                 <span className="cardrow__dot cardrow__dot--rehearse" />
-                <span className="cardrow__a truncate">{promptSide(item, dir)}</span>
-                <span className="cardrow__b truncate">
-                  {displayAnswer(answerSide(item, dir))}
-                </span>
+                <span className="cardrow__a truncate">{preferred(item, front)}</span>
+                <span className="cardrow__b truncate">{displayAnswer(field(item, back))}</span>
               </div>
             ))}
           </div>
 
-          <button type="button" className="btn btn--primary btn--lg btn--block" onClick={nextRound}>
+          <button
+            type="button"
+            className="btn btn--primary btn--lg btn--block"
+            onClick={nextRound}
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+          >
             <Icon name="arrowRight" />
             {t('test.repeatThese', { n: missed.length })}
           </button>
@@ -450,6 +439,7 @@ export function TestRun() {
             <p className="muted small">
               {t('test.rightFirstTime', { correct: firstPass.correct, total: firstPass.total })}
             </p>
+            {partial && <p className="tiny faint" style={{ marginTop: '0.3rem' }}>{t('test.partialDone')}</p>}
           </div>
 
           <h1 className="result__headline">
@@ -486,10 +476,8 @@ export function TestRun() {
                 {stumbled.map((item) => (
                   <div className="cardlist__item" key={item.id}>
                     <div className="cardlist__row">
-                      <span className="cardrow__a truncate">{promptSide(item, dir)}</span>
-                      <span className="cardrow__b truncate">
-                        {displayAnswer(answerSide(item, dir))}
-                      </span>
+                      <span className="cardrow__a truncate">{preferred(item, front)}</span>
+                      <span className="cardrow__b truncate">{displayAnswer(field(item, back))}</span>
                     </div>
                     {item.note && <p className="cardlist__note">{item.note}</p>}
                   </div>
@@ -510,11 +498,7 @@ export function TestRun() {
               <Icon name="rotate" />
               {t('test.testAgain')}
             </button>
-            <button
-              type="button"
-              className="btn btn--ghost btn--block"
-              onClick={() => navigate(`/s/${slug}`)}
-            >
+            <button type="button" className="btn btn--ghost btn--block" onClick={() => navigate(`/s/${slug}`)}>
               {t('cards.backToSet')}
             </button>
           </div>
@@ -524,9 +508,8 @@ export function TestRun() {
   }
 
   // phase === 'running'
-  const revealed = answered !== null
-  const settled = revealed && answered.grade !== 'close'
-  const correctAnswer = card ? displayAnswer(answerSide(card, dir)) : ''
+  const revealed = answer !== null
+  const reveal = card ? displayAnswer(field(card, back)) : ''
 
   return (
     <Shell immersive>
@@ -534,9 +517,12 @@ export function TestRun() {
         back={`/s/${slug}`}
         title={round > 1 ? t('test.round', { n: round }) : set.title}
         actions={
-          <span className="chip">
-            {fromLabel} <Icon name="arrowRight" width={11} height={11} /> {toLabel}
-          </span>
+          <>
+            <span className="chip truncate">
+              {fromLabel} <Icon name="arrowRight" width={11} height={11} /> {toLabel}
+            </span>
+            <FlagButton item={card ? `c:${card.id}` : null} onHidden={drop} />
+          </>
         }
       />
 
@@ -549,13 +535,10 @@ export function TestRun() {
       </div>
 
       <div className="quiz">
-        <div className="quiz__prompt" key={card?.id}>
+        <div className="quiz__prompt" key={`${card?.id}-${round}`}>
           <div>
             {card ? (
-              <Word
-                word={{ ...parts(card, promptKey(dir), show), term: promptSide(card, dir) }}
-                className="quiz__term"
-              />
+              <Word word={{ term: preferred(card, front), gender: genderOf(card, front) }} className="quiz__term" />
             ) : (
               <p className="quiz__term" />
             )}
@@ -563,142 +546,48 @@ export function TestRun() {
           </div>
         </div>
 
-        {mode === 'choice' && question && (
-          <div className="options">
-            {question.options.map((option, optionIndex) => {
-              const isCorrect = optionIndex === question.correctIndex
-              const isChosen = answered?.chosen === optionIndex
-              let className = 'option'
-              if (revealed) {
-                if (isCorrect) {
-                  className += ' option--correct'
-                } else if (isChosen) {
-                  className += ' option--wrong'
-                } else {
-                  className += ' option--muted'
-                }
-              }
-              return (
-                <button
-                  key={`${option}-${optionIndex}`}
-                  type="button"
-                  className={className}
-                  disabled={revealed}
-                  onClick={() => choose(optionIndex)}
-                >
-                  <span className="option__key">{OPTION_KEYS[optionIndex]}</span>
-                  <span className="grow">{option}</span>
-                  {revealed && isCorrect && <Icon name="check" />}
-                  {revealed && isChosen && !isCorrect && <Icon name="x" />}
-                </button>
-              )
-            })}
-          </div>
+        {asked === 'choice' && question && (
+          <Options
+            options={question.options}
+            isRight={(optionIndex) => optionIndex === question.correctIndex}
+            chosen={answer?.chosen ?? null}
+            onChoose={choose}
+          />
         )}
 
-        {mode === 'write' && (
-          <form className="answerbox" onSubmit={submitWritten}>
-            <input
-              ref={answerInput}
-              className="input"
-              value={typed}
-              onChange={(event) => setTyped(event.target.value)}
-              placeholder={t('test.typePlaceholder', { lang: toLabel })}
-              autoComplete="off"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              enterKeyHint="done"
-              disabled={settled}
-              // eslint-disable-next-line jsx-a11y/no-autofocus
-              autoFocus
-            />
-
-            {!revealed && (
-              <button type="submit" className="btn btn--primary btn--block" disabled={!typed.trim()}>
-                {t('test.check')}
-              </button>
-            )}
-
-            {answered?.grade === 'close' && (
-              <>
-                <div className="verdict verdict--close">
-                  <Icon name="alert" />
-                  <span>
-                    {t('test.almost')} {t('test.lastNudge')}
-                  </span>
-                </div>
-                {/* Enter in the field above does the same thing. */}
-                <button type="submit" className="btn btn--block">
-                  <Icon name="undo" />
-                  {t('test.tryAgain')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--block btn--sm"
-                  onClick={() => card && register('wrong', { typed })}
-                >
-                  {t('test.giveUp')}
-                </button>
-              </>
-            )}
-
-            {answered?.grade === 'accent' && (
-              <div className="verdict verdict--correct">
-                <Icon name="check" />
-                <span>
-                  {t('test.accentRight')}{' '}
-                  <span className="verdict__answer">{correctAnswer}</span>
-                </span>
-              </div>
-            )}
-
-            {answered?.grade === 'correct' && (
-              <div className="verdict verdict--correct">
-                <Icon name="check" />
-                <span>{t('test.correct')}</span>
-              </div>
-            )}
-
-            {answered?.grade === 'wrong' && (
-              <div className="verdict verdict--wrong">
-                <Icon name="x" />
-                <span>
-                  {tx('test.theAnswerIs', {
-                    answer: <span className="verdict__answer">{correctAnswer}</span>,
-                  })}
-                </span>
-              </div>
-            )}
-          </form>
+        {asked === 'write' && card && (
+          <WrittenAnswer
+            key={`${card.id}-${round}-${index}`}
+            accepted={[field(card, back), ...alsoAccepted(card, back, variants)]}
+            reveal={reveal}
+            placeholder={t('test.typePlaceholder', { lang: toLabel })}
+            onSettled={(right) => register(right)}
+          />
         )}
 
         {/* The note is part of the answer: this is where "il gesso is kréta in
             the classroom, but also gipsz" has to be readable. */}
-        {settled && card?.note && (
+        {revealed && card?.note && (
           <div className="quiz__note">
             <Icon name="sparkle" />
             <span>{card.note}</span>
           </div>
         )}
 
-        {settled && card && hasConjugation(card) && (
-          <button
-            type="button"
-            className="btn btn--block btn--sm"
-            onClick={() => setVerb(card)}
-          >
+        {revealed && card && hasConjugation(card) && (
+          <button type="button" className="btn btn--block btn--sm" onClick={() => setVerb(card)}>
             <Icon name="list" />
             {t('word.conjugation')}
           </button>
         )}
 
-        {settled && (
+        {revealed && (
           <button
             type="button"
             className="btn btn--primary btn--lg btn--block"
             onClick={advance}
-            autoFocus={mode === 'write'}
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus={asked === 'write'}
           >
             {index + 1 < queue.length
               ? t('common.next')

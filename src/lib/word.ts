@@ -1,92 +1,14 @@
-import type { Card, Direction, Gender, Side, TestsDone } from './types'
+import type { Card, Gender, TestsDone } from './types'
 import { PERSONS } from './types'
-
-/**
- * Reading a card's grammar, and scoring a set.
- *
- * The two sides of a card are `a` and `b`; which of them is the Italian one is
- * not something the app knows, because `langA` and `langB` are free text an
- * editor typed. So every attribute is stored and read per side.
- */
-
-export type Attribute = 'article' | 'plural' | 'gender'
-
-export const ATTRIBUTES: Attribute[] = ['article', 'plural', 'gender']
-
-/** Which attributes a round shows without being asked. */
-export type Show = Record<Attribute, boolean>
-
-export const SHOW_NONE: Show = { article: false, plural: false, gender: false }
-
-export function promptKey(dir: Direction): Side {
-  return dir === 'ab' ? 'a' : 'b'
-}
-
-export function answerKey(dir: Direction): Side {
-  return dir === 'ab' ? 'b' : 'a'
-}
-
-/** What a card actually carries on one side, whatever the round is showing. */
-export function has(card: Card, side: Side, attribute: Attribute): boolean {
-  return Boolean(card.extras?.[attribute]?.[side])
-}
 
 export function hasConjugation(card: Card): boolean {
   return PERSONS.some((person) => Boolean(card.extras?.conj?.[person]))
 }
 
-/** True when at least one card in the set could show this attribute. */
-export function anyHas(cards: readonly Card[], side: Side, attribute: Attribute): boolean {
-  return cards.some((card) => has(card, side, attribute))
-}
-
 export type WordParts = {
-  /** "il", shown in front of the term. */
-  article?: string
   term: string
   /** Rendered as (m) or (f) after the term. */
   gender?: Gender
-  /** The plural, on a line of its own. */
-  plural?: string
-}
-
-/**
- * The word as a round should display it: the term itself, plus whichever
- * attributes are switched on and actually present.
- */
-export function parts(card: Card, side: Side, show: Show): WordParts {
-  const extras = card.extras ?? {}
-  const out: WordParts = { term: side === 'a' ? card.a : card.b }
-
-  if (show.article && extras.article?.[side]) {
-    out.article = extras.article[side]
-  }
-  if (show.gender && extras.gender?.[side]) {
-    out.gender = extras.gender[side]
-  }
-  if (show.plural && extras.plural?.[side]) {
-    out.plural = extras.plural[side]
-  }
-  return out
-}
-
-/** The same word on one line, for places with no room to lay it out. */
-export function flatten(word: WordParts): string {
-  const head = word.article ? `${word.article} ${word.term}` : word.term
-  return word.gender ? `${head} (${word.gender})` : head
-}
-
-/**
- * Extra spellings a typed answer may take, beyond the card side itself.
- *
- * Someone who has been shown "il gesso" all round should not be marked wrong
- * for typing it back, so the article-led form always counts — whether or not
- * articles are switched on for this round.
- */
-export function alsoAccepted(card: Card, side: Side): string[] {
-  const article = card.extras?.article?.[side]
-  const term = side === 'a' ? card.a : card.b
-  return article ? [`${article} ${term}`] : []
 }
 
 // ── Mastery ──────────────────────────────────────────────────────────────────

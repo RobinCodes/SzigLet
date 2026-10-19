@@ -2,20 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { haptics } from '../lib/haptics'
 import { displayAnswer } from '../lib/text'
 import { useI18n } from '../lib/i18n'
-import type { Card, Direction } from '../lib/types'
-import { answerSide, promptSide } from '../lib/study'
-import {
-  ATTRIBUTES,
-  answerKey,
-  has,
-  hasConjugation,
-  parts,
-  promptKey,
-  type Attribute,
-  type Show,
-} from '../lib/word'
+import type { Card } from '../lib/types'
+import { field, genderOf, preferred } from '../lib/variants'
+import { hasConjugation } from '../lib/word'
 import { Icon } from './Icon'
-import { RevealChips, Word } from './Word'
+import { Word } from './Word'
 
 export type Verdict = 'known' | 'rehearse'
 
@@ -25,11 +16,11 @@ export type DeckHandle = { swipe: (verdict: Verdict) => void; flip: () => void }
 type Props = {
   /** The card on top, plus the next few to suggest a stack behind it. */
   queue: Card[]
-  dir: Direction
+  /** The variation on the front of the card, and the one on the back. */
+  front: string
+  back: string
   promptLabel: string
   answerLabel: string
-  /** Which grammar this round shows without being asked. */
-  show: Show
   onVerdict: (card: Card, verdict: Verdict) => void
   /** Opens the verb table. Omitted when the screen has nowhere to put it. */
   onConjugation?: (card: Card) => void
@@ -45,10 +36,10 @@ const EXIT_MS = 260
 
 export function SwipeDeck({
   queue,
-  dir,
+  front: frontKey,
+  back: backKey,
   promptLabel,
   answerLabel,
-  show,
   onVerdict,
   onConjugation,
   handle,
@@ -56,8 +47,6 @@ export function SwipeDeck({
   const { t } = useI18n()
   const [flipped, setFlipped] = useState(false)
   const [leaving, setLeaving] = useState<Verdict | null>(null)
-  /** Attributes this one card is showing beyond what the round asked for. */
-  const [revealed, setRevealed] = useState<ReadonlySet<Attribute>>(new Set())
 
   const cardRef = useRef<HTMLDivElement>(null)
   const knownStamp = useRef<HTMLSpanElement>(null)
@@ -137,7 +126,6 @@ export function SwipeDeck({
   useEffect(() => {
     setFlipped(false)
     setLeaving(null)
-    setRevealed(new Set())
     cancelFrame()
     offset.current = { dx: 0, dy: 0 }
     drag.current.active = false
@@ -299,23 +287,12 @@ export function SwipeDeck({
     return null
   }
 
-  const front = promptSide(top, dir)
-  const back = displayAnswer(answerSide(top, dir))
-
-  // What the round asks for, plus anything revealed on this card alone.
-  const effective: Show = { ...show }
-  for (const attribute of revealed) {
-    effective[attribute] = true
-  }
-
-  const frontWord = { ...parts(top, promptKey(dir), effective), term: front }
-  const backWord = { ...parts(top, answerKey(dir), effective), term: back }
-
-  // Grammar the card carries on the answer side that is not on screen: offered
-  // as a button rather than simply withheld.
-  const hidden = ATTRIBUTES.filter(
-    (attribute) => has(top, answerKey(dir), attribute) && !effective[attribute],
-  )
+  // The front asks about the preferred form only; the back shows every
+  // accepted answer.
+  const front = preferred(top, frontKey)
+  const back = displayAnswer(field(top, backKey))
+  const frontWord = { term: front, gender: genderOf(top, frontKey) }
+  const backWord = { term: back, gender: genderOf(top, backKey) }
 
   return (
     <div className="deck">
@@ -386,13 +363,6 @@ export function SwipeDeck({
                   className={`flashcard__term${back.length > 28 ? ' flashcard__term--long' : ''}`}
                 />
                 {top.note && <p className="flashcard__note">{top.note}</p>}
-
-                <RevealChips
-                  attributes={hidden}
-                  onReveal={(attribute) =>
-                    setRevealed((current) => new Set(current).add(attribute))
-                  }
-                />
 
                 {onConjugation && hasConjugation(top) && (
                   <div className="revealrow">

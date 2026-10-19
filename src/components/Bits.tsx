@@ -59,6 +59,48 @@ export function DualRing({
   )
 }
 
+/** One arc around an icon: a course's path, a question set's solved share. */
+export function Ring({
+  value,
+  label,
+  icon,
+  size = 46,
+  tone,
+}: {
+  /** 0 to 1. */
+  value: number
+  label: string
+  icon?: IconName
+  size?: number
+  tone?: 'known'
+}) {
+  const stroke = 4
+  const radius = (size - stroke) / 2
+  const circumference = 2 * Math.PI * radius
+  return (
+    <div className="ring" style={{ width: size, height: size }} role="img" aria-label={label}>
+      <svg width={size} height={size}>
+        <circle className="ring__track" cx={size / 2} cy={size / 2} r={radius} fill="none" strokeWidth={stroke} />
+        <circle
+          className={`ring__value${tone === 'known' || value >= 1 ? ' ring__value--known' : ''}`}
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          strokeWidth={stroke}
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * (1 - Math.min(1, Math.max(0, value)))}
+        />
+      </svg>
+      {icon && (
+        <span className="ring__label">
+          <Icon name={icon} width={18} height={18} />
+        </span>
+      )}
+    </div>
+  )
+}
+
 /** A horizontal bar split into known / rehearsing / untouched. */
 export function SplitBar({
   known,

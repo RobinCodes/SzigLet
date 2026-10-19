@@ -2,14 +2,28 @@ import { solveChallenge, type Challenge } from './pow'
 import type {
   AdminOverview,
   AdminUser,
+  Answer,
+  Author,
   CardExtras,
+  Course,
+  CourseStats,
+  CourseSummary,
   Direction,
+  FlagReport,
+  ItemUpdate,
+  LessonResult,
+  NodeContent,
+  NodeDetail,
   ProgressUpdate,
+  QuestionKind,
   RunResult,
+  SetKind,
+  SetStats,
   SetSummary,
   Stats,
   StudySet,
   User,
+  Variant,
 } from './types'
 
 const BASE = '/api'
@@ -161,6 +175,41 @@ export type CardInput = {
   extras?: CardExtras
 }
 
+/** A question on the way to the server. `tempKey` names one not saved yet. */
+export type QuestionInput = {
+  id?: number
+  tempKey?: string
+  kind: QuestionKind
+  instruction?: string
+  body: string
+  answers: Answer[]
+  note?: string
+}
+
+export type SetInput = {
+  title: string
+  description: string
+  langA: string
+  langB: string
+  kind: SetKind
+  published: boolean
+  sortOrder: number
+  variants: Variant[]
+  defaults: string[]
+  authors: number[]
+  cards: CardInput[]
+  questions: QuestionInput[]
+}
+
+export type CourseInput = {
+  title: string
+  description: string
+  published: boolean
+  authors: number[]
+  sets: number[]
+  nodeOrder: number[]
+}
+
 export type Session = { user: User; csrf: string }
 export type Me = { user: User | null; registrationOpen: boolean; canEdit: boolean }
 
@@ -209,36 +258,68 @@ export const api = {
 
   set: (slug: string, signal?: AbortSignal) => request<StudySet>(`/sets/${slug}`, { signal }),
 
-  createSet: (body: {
-    title: string
-    description?: string
-    langA: string
-    langB: string
-    published: boolean
-    cards?: CardInput[]
-  }) => request<StudySet>('/sets', { method: 'POST', body }),
+  createSet: (body: Partial<SetInput> & { title: string; langA: string; langB: string }) =>
+    request<StudySet>('/sets', { method: 'POST', body }),
 
-  updateSet: (
-    id: number,
-    body: Partial<{
-      title: string
-      description: string
-      langA: string
-      langB: string
-      published: boolean
-      sortOrder: number
-      cards: CardInput[]
-    }>,
-  ) => request<StudySet>(`/sets/${id}`, { method: 'PATCH', body }),
+  updateSet: (id: number, body: Partial<SetInput>) =>
+    request<StudySet>(`/sets/${id}`, { method: 'PATCH', body }),
 
   deleteSet: (id: number) => request<{ ok: true }>(`/sets/${id}`, { method: 'DELETE' }),
+
+  setStats: (id: number) => request<SetStats>(`/sets/${id}/stats`),
+
+  editors: () => request<{ editors: Author[] }>('/editors').then((r) => r.editors),
+
+  // ── Courses ────────────────────────────────────────────────────────────────
+
+  courses: () => request<{ courses: CourseSummary[] }>('/courses').then((r) => r.courses),
+
+  course: (slug: string, signal?: AbortSignal) => request<Course>(`/courses/${slug}`, { signal }),
+
+  createCourse: (body: Partial<CourseInput> & { title: string }) =>
+    request<Course>('/courses', { method: 'POST', body }),
+
+  updateCourse: (id: number, body: Partial<CourseInput>) =>
+    request<Course>(`/courses/${id}`, { method: 'PATCH', body }),
+
+  deleteCourse: (id: number) => request<{ ok: true }>(`/courses/${id}`, { method: 'DELETE' }),
+
+  courseStats: (id: number) => request<CourseStats>(`/courses/${id}/stats`),
+
+  createNode: (courseId: number, title: string) =>
+    request<{ id: number }>(`/courses/${courseId}/nodes`, { method: 'POST', body: { title } }),
+
+  node: (id: number, signal?: AbortSignal) => request<NodeDetail>(`/nodes/${id}`, { signal }),
+
+  updateNode: (
+    id: number,
+    body: { title?: string; description?: string; content?: NodeContent; questions?: QuestionInput[] },
+  ) => request<NodeDetail>(`/nodes/${id}`, { method: 'PATCH', body }),
+
+  deleteNode: (id: number) => request<{ ok: true }>(`/nodes/${id}`, { method: 'DELETE' }),
+
+  saveItems: (updates: ItemUpdate[]) =>
+    request<{ updated: number }>('/items', { method: 'POST', body: { updates } }),
+
+  recordLesson: (result: LessonResult) =>
+    request<{ id: number }>('/lessons', { method: 'POST', body: result }),
+
+  // ── Reports ────────────────────────────────────────────────────────────────
+
+  flag: (item: string, reason: string, hide: boolean) =>
+    request<{ id: number }>('/flags', { method: 'POST', body: { item, reason, hide } }),
+
+  flags: () => request<{ flags: FlagReport[] }>('/flags').then((r) => r.flags),
+
+  settleFlag: (item: string, status: 'resolved' | 'dismissed') =>
+    request<{ ok: true }>('/flags/settle', { method: 'POST', body: { item, status } }),
 
   // ── Study state ────────────────────────────────────────────────────────────
 
   saveProgress: (dir: Direction, updates: ProgressUpdate[]) =>
     request<{ updated: number }>('/progress', { method: 'POST', body: { dir, updates } }),
 
-  resetProgress: (setId: number, dir?: Direction | 'both') =>
+  resetProgress: (setId: number, dir?: Direction) =>
     request<{ ok: true }>('/progress/reset', {
       method: 'POST',
       body: { setId, dir: dir ?? 'both' },
@@ -271,6 +352,13 @@ export const api = {
 type OutboxEntry =
   | { kind: 'progress'; dir: Direction; updates: ProgressUpdate[] }
   | { kind: 'result'; result: RunResult }
+  | { kind: 'items'; updates: ItemUpdate[] }
+  | { kind: 'lesson'; result: LessonResult }
+
+/** Only a failure to reach the server is worth queueing; a refusal is not. */
+function retriable(error: unknown): boolean {
+  return error instanceof ApiError && (error.offline || error.status >= 500)
+}
 
 function readOutbox(): OutboxEntry[] {
   try {
@@ -312,7 +400,7 @@ export const outbox = {
       await api.saveProgress(dir, updates)
       return true
     } catch (error) {
-      if (error instanceof ApiError && (error.offline || error.status >= 500)) {
+      if (retriable(error)) {
         enqueue({ kind: 'progress', dir, updates })
         return false
       }
@@ -325,8 +413,37 @@ export const outbox = {
       await api.recordResult(result)
       return true
     } catch (error) {
-      if (error instanceof ApiError && (error.offline || error.status >= 500)) {
+      if (retriable(error)) {
         enqueue({ kind: 'result', result })
+        return false
+      }
+      throw error
+    }
+  },
+
+  async saveItems(updates: ItemUpdate[]): Promise<boolean> {
+    if (updates.length === 0) {
+      return true
+    }
+    try {
+      await api.saveItems(updates)
+      return true
+    } catch (error) {
+      if (retriable(error)) {
+        enqueue({ kind: 'items', updates })
+        return false
+      }
+      throw error
+    }
+  },
+
+  async recordLesson(result: LessonResult): Promise<boolean> {
+    try {
+      await api.recordLesson(result)
+      return true
+    } catch (error) {
+      if (retriable(error)) {
+        enqueue({ kind: 'lesson', result })
         return false
       }
       throw error
@@ -344,8 +461,12 @@ export const outbox = {
       try {
         if (entry.kind === 'progress') {
           await api.saveProgress(entry.dir, entry.updates)
-        } else {
+        } else if (entry.kind === 'result') {
           await api.recordResult(entry.result)
+        } else if (entry.kind === 'items') {
+          await api.saveItems(entry.updates)
+        } else {
+          await api.recordLesson(entry.result)
         }
         sent++
       } catch (error) {

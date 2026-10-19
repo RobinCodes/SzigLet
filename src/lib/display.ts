@@ -1,40 +1,52 @@
-import { ATTRIBUTES, SHOW_NONE, type Attribute, type Show } from './word'
+import type { Direction } from './types'
 
 /**
- * Which word attributes a set shows while studying.
+ * Which pair of variations a set is studied in, per set and per device.
  *
- * Per set and per device, like the study direction: whether you want articles
- * in front of every noun depends on the set and on what you are working on
- * this week, not on an account-wide preference.
+ * Remembering it is the difference between one tap and three. The key is the
+ * same one the app has always used, so a direction chosen before variations
+ * existed ("ab" or "ba") still reads back as itself.
  */
 
-const KEY = 'sziglet.show'
+const KEY = 'sziglet.dir'
 
-export function readShow(slug: string): Show {
+export function readDirection(slug: string): Direction {
   try {
-    const saved = localStorage.getItem(`${KEY}.${slug}`)
-    if (saved === null) {
-      return SHOW_NONE
-    }
-    const on = new Set(saved.split(',').filter(Boolean))
-    return ATTRIBUTES.reduce<Show>(
-      (show, attribute) => ({ ...show, [attribute]: on.has(attribute) }),
-      { ...SHOW_NONE },
-    )
+    return localStorage.getItem(`${KEY}.${slug}`) ?? 'ab'
   } catch {
-    return SHOW_NONE
+    return 'ab'
   }
 }
 
-export function storeShow(slug: string, show: Show): void {
+export function storeDirection(slug: string, dir: Direction): void {
   try {
-    const on = ATTRIBUTES.filter((attribute) => show[attribute])
-    localStorage.setItem(`${KEY}.${slug}`, on.join(','))
+    localStorage.setItem(`${KEY}.${slug}`, dir)
   } catch {
     /* storage blocked */
   }
 }
 
-export function toggle(show: Show, attribute: Attribute): Show {
-  return { ...show, [attribute]: !show[attribute] }
+/**
+ * How many exercises a lesson has. A per-device preference: ten on the bus,
+ * twenty-five at a desk.
+ */
+const LESSON_KEY = 'sziglet.lessonSize'
+export const LESSON_SIZES = [5, 10, 15, 20, 30] as const
+export const DEFAULT_LESSON_SIZE = 10
+
+export function readLessonSize(): number {
+  try {
+    const saved = Number(localStorage.getItem(LESSON_KEY))
+    return Number.isFinite(saved) && saved >= 3 && saved <= 60 ? saved : DEFAULT_LESSON_SIZE
+  } catch {
+    return DEFAULT_LESSON_SIZE
+  }
+}
+
+export function storeLessonSize(size: number): void {
+  try {
+    localStorage.setItem(LESSON_KEY, String(size))
+  } catch {
+    /* storage blocked */
+  }
 }

@@ -1,21 +1,9 @@
 import type { Card, CardState, Direction } from './types'
+import { field, preferred } from './variants'
+import { normalize } from './text'
 
-/** The side the learner is shown, given a direction. */
-export function promptSide(card: Card, dir: Direction): string {
-  return dir === 'ab' ? card.a : card.b
-}
-
-/** The side the learner has to produce. */
-export function answerSide(card: Card, dir: Direction): string {
-  return dir === 'ab' ? card.b : card.a
-}
-
-export function promptLang(set: { langA: string; langB: string }, dir: Direction): string {
-  return dir === 'ab' ? set.langA : set.langB
-}
-
-export function answerLang(set: { langA: string; langB: string }, dir: Direction): string {
-  return dir === 'ab' ? set.langB : set.langA
+export function stateOf(card: Card, dir: Direction): CardState {
+  return card.state?.[dir] ?? 'new'
 }
 
 /** Fisher-Yates, on a copy. */
@@ -34,14 +22,14 @@ export function shuffle<T>(items: readonly T[]): T[] {
 export function countStates(cards: readonly Card[], dir: Direction): Record<CardState, number> {
   const tally: Record<CardState, number> = { new: 0, rehearse: 0, known: 0 }
   for (const card of cards) {
-    tally[card.state[dir]]++
+    tally[stateOf(card, dir)]++
   }
   return tally
 }
 
 /** True once every card in the set is marked known for this direction. */
 export function isDeckCleared(cards: readonly Card[], dir: Direction): boolean {
-  return cards.length > 0 && cards.every((card) => card.state[dir] === 'known')
+  return cards.length > 0 && cards.every((card) => stateOf(card, dir) === 'known')
 }
 
 /**
@@ -50,8 +38,8 @@ export function isDeckCleared(cards: readonly Card[], dir: Direction): boolean {
  * A fully-known set replays in full, for revision.
  */
 export function buildRound(cards: readonly Card[], dir: Direction): Card[] {
-  const rehearse = cards.filter((card) => card.state[dir] === 'rehearse')
-  const fresh = cards.filter((card) => card.state[dir] === 'new')
+  const rehearse = cards.filter((card) => stateOf(card, dir) === 'rehearse')
+  const fresh = cards.filter((card) => stateOf(card, dir) === 'new')
   if (rehearse.length + fresh.length === 0) {
     return shuffle(cards)
   }
@@ -63,7 +51,7 @@ export function buildRound(cards: readonly Card[], dir: Direction): Card[] {
  * that they have to recall it rather than echo it, close enough that it stays
  * in the same sitting.
  */
-export function requeue(queue: readonly Card[], card: Card): Card[] {
+export function requeue<T>(queue: readonly T[], card: T): T[] {
   const gap = Math.min(queue.length, 3)
   const next = queue.slice()
   next.splice(gap, 0, card)
@@ -81,43 +69,45 @@ export type ChoiceQuestion = {
 }
 
 /**
- * Builds one ABCD question. Distractors come from the same set, preferring
- * answers of a similar length so the right one cannot be spotted by shape.
+ * Picks `count` distractors for `answer` from `candidates`, preferring ones of
+ * a similar length so the right answer cannot be spotted by its shape.
  */
+export function distractors(answer: string, candidates: readonly string[], count: number): string[] {
+  const seen = new Set([normalize(answer)])
+  const unique = candidates.filter((text) => {
+    const key = normalize(text)
+    if (!key || seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+  const byClosestLength = unique.sort(
+    (x, y) => Math.abs(x.length - answer.length) - Math.abs(y.length - answer.length),
+  )
+  // Shortlist plausible lengths, then randomise within it so the same card
+  // does not always draw the same wrong answers.
+  const shortlist = byClosestLength.slice(0, Math.max(count * 3, 9))
+  return shuffle(shortlist).slice(0, count)
+}
+
+/** Builds one ABCD question, with distractors from the same pool. */
 export function buildChoiceQuestion(
   card: Card,
   pool: readonly Card[],
-  dir: Direction,
+  front: string,
+  back: string,
   optionCount = 4,
 ): ChoiceQuestion {
-  const answer = answerSide(card, dir)
-  const seen = new Set([answer.toLowerCase()])
-
-  const candidates = pool
-    .filter((other) => other.id !== card.id)
-    .map((other) => answerSide(other, dir))
-    .filter((text) => {
-      const key = text.toLowerCase()
-      if (seen.has(key)) {
-        return false
-      }
-      seen.add(key)
-      return true
-    })
-
-  const byClosestLength = candidates.sort(
-    (x, y) => Math.abs(x.length - answer.length) - Math.abs(y.length - answer.length),
-  )
-
-  // Shortlist plausible lengths, then randomise within it so the same card
-  // does not always draw the same three wrong answers.
-  const shortlist = byClosestLength.slice(0, Math.max(optionCount * 3, 9))
-  const distractors = shuffle(shortlist).slice(0, optionCount - 1)
-  const options = shuffle([answer, ...distractors])
+  const answer = preferred(card, back)
+  const others = pool
+    .filter((other) => other.id !== card.id && field(other, back).trim())
+    .map((other) => preferred(other, back))
+  const options = shuffle([answer, ...distractors(answer, others, optionCount - 1)])
 
   return {
     card,
-    prompt: promptSide(card, dir),
+    prompt: preferred(card, front),
     answer,
     options,
     correctIndex: options.indexOf(answer),

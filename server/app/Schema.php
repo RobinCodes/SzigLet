@@ -9,7 +9,7 @@ namespace SzigLet;
  */
 final class Schema
 {
-    public const VERSION = 2;
+    public const VERSION = 3;
 
     public static function ensure(): void
     {
@@ -22,6 +22,9 @@ final class Schema
         }
         if ($have < 2) {
             self::v2();
+        }
+        if ($have < 3) {
+            self::v3();
         }
         Db::run(
             'INSERT INTO sl_meta (k, v) VALUES (:k, :v)
@@ -185,6 +188,257 @@ final class Schema
             return;
         }
         Db::run('ALTER TABLE sl_cards ADD COLUMN extras TEXT NULL AFTER note');
+    }
+
+    /**
+     * Courses, nodes and questions; card variations; flags; co-authors.
+     *
+     * Every step checks before it acts, because a shared host can time a
+     * request out halfway through and the next one has to be able to finish
+     * the job rather than trip over what the first one already did.
+     */
+    private static function v3(): void
+    {
+        $t = 'ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+
+        if (!self::hasColumn('sl_sets', 'kind')) {
+            Db::run("ALTER TABLE sl_sets
+                ADD COLUMN kind ENUM('words','questions') NOT NULL DEFAULT 'words' AFTER lang_b");
+        }
+        if (!self::hasColumn('sl_sets', 'variants')) {
+            Db::run('ALTER TABLE sl_sets ADD COLUMN variants TEXT NULL AFTER kind');
+        }
+
+        // A study direction used to be one of two values. With variations it
+        // is any pair of them ("a>v1"), and the two old values keep meaning
+        // what they always meant, so existing progress needs no rewriting.
+        Db::run('ALTER TABLE sl_progress MODIFY dir VARCHAR(24) NOT NULL');
+        Db::run("ALTER TABLE sl_results
+            MODIFY dir VARCHAR(24) NOT NULL,
+            MODIFY mode ENUM('flashcards','choice','write','mixed') NOT NULL");
+        if (!self::hasColumn('sl_results', 'partial')) {
+            Db::run('ALTER TABLE sl_results ADD COLUMN partial TINYINT(1) NOT NULL DEFAULT 0 AFTER correct');
+        }
+
+        Db::run("CREATE TABLE IF NOT EXISTS sl_courses (
+            id           INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            slug         VARCHAR(80) NOT NULL,
+            title        VARCHAR(120) NOT NULL,
+            description  VARCHAR(500) NULL,
+            is_published TINYINT(1) NOT NULL DEFAULT 1,
+            sort_order   INT NOT NULL DEFAULT 0,
+            created_by   INT UNSIGNED NULL,
+            created_at   INT UNSIGNED NOT NULL,
+            updated_at   INT UNSIGNED NOT NULL,
+            UNIQUE KEY uk_courses_slug (slug),
+            CONSTRAINT fk_courses_author FOREIGN KEY (created_by)
+                REFERENCES sl_users (id) ON DELETE SET NULL
+        ) $t");
+
+        Db::run("CREATE TABLE IF NOT EXISTS sl_course_sets (
+            course_id INT UNSIGNED NOT NULL,
+            set_id    INT UNSIGNED NOT NULL,
+            position  INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (course_id, set_id),
+            CONSTRAINT fk_course_sets_course FOREIGN KEY (course_id)
+                REFERENCES sl_courses (id) ON DELETE CASCADE,
+            CONSTRAINT fk_course_sets_set FOREIGN KEY (set_id)
+                REFERENCES sl_sets (id) ON DELETE CASCADE
+        ) $t");
+
+        // A node's sub-nodes and parts live in one JSON document: they are
+        // only ever edited, saved and read as a whole.
+        Db::run("CREATE TABLE IF NOT EXISTS sl_nodes (
+            id          INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            course_id   INT UNSIGNED NOT NULL,
+            title       VARCHAR(120) NOT NULL,
+            description VARCHAR(500) NULL,
+            content     MEDIUMTEXT NULL,
+            position    INT NOT NULL DEFAULT 0,
+            created_at  INT UNSIGNED NOT NULL,
+            updated_at  INT UNSIGNED NOT NULL,
+            KEY k_nodes_course (course_id, position),
+            CONSTRAINT fk_nodes_course FOREIGN KEY (course_id)
+                REFERENCES sl_courses (id) ON DELETE CASCADE
+        ) $t");
+
+        // A question belongs to a question set, or to the node it was written
+        // in. Exactly one of the two is set.
+        Db::run("CREATE TABLE IF NOT EXISTS sl_questions (
+            id          INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            set_id      INT UNSIGNED NULL,
+            node_id     INT UNSIGNED NULL,
+            kind        ENUM('answer','gap') NOT NULL DEFAULT 'answer',
+            instruction VARCHAR(300) NULL,
+            body        VARCHAR(1000) NOT NULL,
+            answers     TEXT NOT NULL,
+            note        VARCHAR(300) NULL,
+            position    INT NOT NULL DEFAULT 0,
+            created_at  INT UNSIGNED NOT NULL,
+            KEY k_questions_set (set_id, position),
+            KEY k_questions_node (node_id, position),
+            CONSTRAINT fk_questions_set FOREIGN KEY (set_id)
+                REFERENCES sl_sets (id) ON DELETE CASCADE,
+            CONSTRAINT fk_questions_node FOREIGN KEY (node_id)
+                REFERENCES sl_nodes (id) ON DELETE CASCADE
+        ) $t");
+
+        // What a learner has done with one card or question inside lessons.
+        // `item` is "c:12" or "q:7": lessons mix the two freely.
+        Db::run("CREATE TABLE IF NOT EXISTS sl_item_progress (
+            user_id    INT UNSIGNED NOT NULL,
+            item       VARCHAR(16) NOT NULL,
+            seen       INT UNSIGNED NOT NULL DEFAULT 0,
+            solved     INT UNSIGNED NOT NULL DEFAULT 0,
+            wrong      INT UNSIGNED NOT NULL DEFAULT 0,
+            last_ok    TINYINT(1) NOT NULL DEFAULT 0,
+            updated_at INT UNSIGNED NOT NULL,
+            PRIMARY KEY (user_id, item),
+            KEY k_item_progress_item (item),
+            CONSTRAINT fk_item_progress_user FOREIGN KEY (user_id)
+                REFERENCES sl_users (id) ON DELETE CASCADE
+        ) $t");
+
+        Db::run("CREATE TABLE IF NOT EXISTS sl_lesson_runs (
+            id             INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            user_id        INT UNSIGNED NOT NULL,
+            node_id        INT UNSIGNED NOT NULL,
+            subnode        VARCHAR(16) NOT NULL,
+            total          SMALLINT UNSIGNED NOT NULL,
+            correct        SMALLINT UNSIGNED NOT NULL,
+            duration_ms    INT UNSIGNED NOT NULL,
+            completed_sub  TINYINT(1) NOT NULL DEFAULT 0,
+            completed_node TINYINT(1) NOT NULL DEFAULT 0,
+            created_at     INT UNSIGNED NOT NULL,
+            KEY k_lesson_runs_user (user_id, created_at),
+            KEY k_lesson_runs_node (node_id),
+            CONSTRAINT fk_lesson_runs_user FOREIGN KEY (user_id)
+                REFERENCES sl_users (id) ON DELETE CASCADE,
+            CONSTRAINT fk_lesson_runs_node FOREIGN KEY (node_id)
+                REFERENCES sl_nodes (id) ON DELETE CASCADE
+        ) $t");
+
+        Db::run("CREATE TABLE IF NOT EXISTS sl_flags (
+            id          INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            user_id     INT UNSIGNED NOT NULL,
+            item        VARCHAR(16) NOT NULL,
+            reason      VARCHAR(500) NULL,
+            hide        TINYINT(1) NOT NULL DEFAULT 0,
+            status      ENUM('open','resolved','dismissed') NOT NULL DEFAULT 'open',
+            created_at  INT UNSIGNED NOT NULL,
+            resolved_by INT UNSIGNED NULL,
+            resolved_at INT UNSIGNED NULL,
+            KEY k_flags_item (item, status),
+            KEY k_flags_user (user_id, status),
+            CONSTRAINT fk_flags_user FOREIGN KEY (user_id)
+                REFERENCES sl_users (id) ON DELETE CASCADE
+        ) $t");
+
+        // Sets and courses alike: one table, so "everything I wrote" is one
+        // query. No foreign key on entity_id for the same reason; deleting a
+        // set or a course removes its rows explicitly.
+        Db::run("CREATE TABLE IF NOT EXISTS sl_authors (
+            kind      ENUM('set','course') NOT NULL,
+            entity_id INT UNSIGNED NOT NULL,
+            user_id   INT UNSIGNED NOT NULL,
+            position  SMALLINT NOT NULL DEFAULT 0,
+            PRIMARY KEY (kind, entity_id, user_id),
+            KEY k_authors_user (user_id),
+            CONSTRAINT fk_authors_user FOREIGN KEY (user_id)
+                REFERENCES sl_users (id) ON DELETE CASCADE
+        ) $t");
+
+        Db::run("INSERT IGNORE INTO sl_authors (kind, entity_id, user_id, position)
+                 SELECT 'set', id, created_by, 0 FROM sl_sets WHERE created_by IS NOT NULL");
+
+        self::articlesToVariants();
+    }
+
+    /**
+     * Articles and plurals used to be fields of their own. They are
+     * variations now — "il gesso" and "i gessi" are just other ways the card
+     * can be shown — so each set that used them gets a variation per side
+     * that had any, and the cards carry the full form. Gender and verb tables
+     * stay where they are.
+     */
+    private static function articlesToVariants(): void
+    {
+        $sets = Db::all('SELECT id, lang_a, lang_b, variants FROM sl_sets');
+        foreach ($sets as $set) {
+            $cards = Db::all(
+                'SELECT id, side_a, side_b, extras FROM sl_cards
+                  WHERE set_id = :s AND extras IS NOT NULL',
+                ['s' => $set['id']],
+            );
+            $decoded = [];
+            $used    = [];
+            foreach ($cards as $card) {
+                $extras = json_decode((string) $card['extras'], true);
+                if (!is_array($extras) || (!isset($extras['article']) && !isset($extras['plural']))) {
+                    continue;
+                }
+                $decoded[(int) $card['id']] = [$card, $extras];
+                foreach (['article', 'plural'] as $field) {
+                    foreach (['a', 'b'] as $side) {
+                        if (($extras[$field][$side] ?? '') !== '') {
+                            $used[$field . $side] = true;
+                        }
+                    }
+                }
+            }
+            if ($decoded === []) {
+                continue;
+            }
+
+            $config = json_decode((string) ($set['variants'] ?? ''), true);
+            $config = is_array($config) ? $config : [];
+            $extra  = is_array($config['extra'] ?? null) ? $config['extra'] : [];
+            $names  = ['article' => 'article', 'plural' => 'plural'];
+            $keys   = [];
+            foreach (['article' => 'art', 'plural' => 'pl'] as $field => $prefix) {
+                foreach (['a', 'b'] as $side) {
+                    if (!isset($used[$field . $side])) {
+                        continue;
+                    }
+                    $key = $prefix . $side;
+                    $keys[$field . $side] = $key;
+                    if (!in_array($key, array_column($extra, 'key'), true)) {
+                        $lang = (string) ($side === 'a' ? $set['lang_a'] : $set['lang_b']);
+                        $extra[] = ['key' => $key, 'name' => mb_substr($lang . ' — ' . $names[$field], 0, 40), 'side' => $side];
+                    }
+                }
+            }
+            $config['extra'] = $extra;
+            Db::run('UPDATE sl_sets SET variants = :v WHERE id = :id', [
+                'v'  => json_encode($config, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'id' => $set['id'],
+            ]);
+
+            foreach ($decoded as $id => [$card, $extras]) {
+                $v = is_array($extras['v'] ?? null) ? $extras['v'] : [];
+                foreach (['a', 'b'] as $side) {
+                    $term    = (string) ($side === 'a' ? $card['side_a'] : $card['side_b']);
+                    $article = trim((string) ($extras['article'][$side] ?? ''));
+                    $plural  = trim((string) ($extras['plural'][$side] ?? ''));
+                    if ($article !== '') {
+                        // "l'" is written against the word; everything else takes a space.
+                        $joined = preg_match("/['’]$/u", $article) === 1 ? $article . $term : "$article $term";
+                        $v[$keys['article' . $side]] = mb_substr($joined, 0, 300);
+                    }
+                    if ($plural !== '') {
+                        $v[$keys['plural' . $side]] = mb_substr($plural, 0, 300);
+                    }
+                }
+                unset($extras['article'], $extras['plural']);
+                if ($v !== []) {
+                    $extras['v'] = $v;
+                }
+                Db::run('UPDATE sl_cards SET extras = :x WHERE id = :id', [
+                    'x'  => $extras === [] ? null : json_encode($extras, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'id' => $id,
+                ]);
+            }
+        }
     }
 
     private static function hasColumn(string $table, string $column): bool

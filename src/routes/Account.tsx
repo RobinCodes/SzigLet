@@ -10,6 +10,7 @@ import { applyTheme, readTheme, type Theme } from '../lib/theme'
 import { useIsInstalled } from '../lib/platform'
 import { appUpdate } from '../lib/update'
 import { initials } from '../lib/format'
+import { LESSON_SIZES, readLessonSize, storeLessonSize } from '../lib/display'
 import { Shell, TopBar } from '../components/Shell'
 import { Segmented } from '../components/Bits'
 import { Icon } from '../components/Icon'
@@ -30,6 +31,7 @@ export function Account() {
   const [next, setNext] = useState('')
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [lessonSize, setLessonSize] = useState(readLessonSize)
 
   useEffect(() => {
     const timer = window.setInterval(() => setPending(outbox.pending), 4000)
@@ -174,6 +176,29 @@ export function Account() {
             </label>
           </div>
 
+          <div className="panel stack" style={{ '--gap': '0.5rem' } as React.CSSProperties}>
+            <div>
+              <div style={{ fontWeight: 580 }}>{t('course.lessonLength')}</div>
+              <div className="small muted">{t('course.lessonLengthHint')}</div>
+            </div>
+            <div className="togglerow">
+              {LESSON_SIZES.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`chip chip--button${lessonSize === value ? ' chip--accent' : ''}`}
+                  aria-pressed={lessonSize === value}
+                  onClick={() => {
+                    setLessonSize(value)
+                    storeLessonSize(value)
+                  }}
+                >
+                  {t('course.exercises', { n: value })}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <button type="button" className="panel spread" onClick={sync} style={{ textAlign: 'left' }}>
             <div>
               <div style={{ fontWeight: 580 }}>{t('account.offlineChanges')}</div>
@@ -236,6 +261,13 @@ export function Account() {
 
         <section className="stack" style={{ '--gap': '0.5rem' } as React.CSSProperties}>
           <p className="eyebrow">{t('account.title')}</p>
+
+          {canEdit && (
+            <Link to="/reports" className="btn btn--block">
+              <Icon name="flag" />
+              {t('flags.inbox')}
+            </Link>
+          )}
 
           {isOwner && (
             <Link to="/admin" className="btn btn--block">

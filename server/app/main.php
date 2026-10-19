@@ -25,6 +25,11 @@ require __DIR__ . '/Schema.php';
 require __DIR__ . '/Security.php';
 require __DIR__ . '/Auth.php';
 require __DIR__ . '/Sets.php';
+require __DIR__ . '/Questions.php';
+require __DIR__ . '/Items.php';
+require __DIR__ . '/Authors.php';
+require __DIR__ . '/Flags.php';
+require __DIR__ . '/Courses.php';
 require __DIR__ . '/Progress.php';
 require __DIR__ . '/Admin.php';
 
@@ -62,6 +67,7 @@ if (strlen($secret) < 32) {
 $security = new Security($secret, $config['pow']);
 $auth     = new Auth($secret, $security);
 $sets     = new Sets($security);
+$courses  = new Courses($security);
 $progress = new Progress();
 $admin    = new Admin($security);
 
@@ -180,6 +186,93 @@ try {
         case $method === 'DELETE' && preg_match('#^/sets/(\d+)$#', $path, $m) === 1:
             $me = $auth->requireEditor();
             $sets->destroy((int) $m[1], (int) $me['id']);
+            Http::json(['ok' => true]);
+
+        case $method === 'GET' && preg_match('#^/sets/(\d+)/stats$#', $path, $m) === 1:
+            $me = $auth->requireEditor();
+            Http::json($sets->stats((int) $m[1], (int) $me['id']));
+
+        case $route === 'GET /editors':
+            $auth->requireEditor();
+            Http::json(['editors' => Authors::candidates()]);
+
+        // ── Courses and nodes ───────────────────────────────────────────────
+        case $route === 'GET /courses':
+            $me = $auth->require();
+            Http::json(['courses' => $courses->index(
+                (int) $me['id'],
+                in_array($me['role'], ['editor', 'owner'], true),
+            )]);
+
+        case $method === 'GET' && preg_match('#^/courses/([a-z0-9][a-z0-9\-]{0,79})$#', $path, $m) === 1:
+            $me = $auth->require();
+            Http::json($courses->show($m[1], (int) $me['id'], in_array($me['role'], ['editor', 'owner'], true)));
+
+        case $route === 'POST /courses':
+            $me = $auth->requireEditor();
+            $security->limit('write:user:' . $me['id'], 240, 3600, 'Slow down a moment.');
+            Http::json($courses->create(Http::body(), (int) $me['id']), 201);
+
+        case $method === 'PATCH' && preg_match('#^/courses/(\d+)$#', $path, $m) === 1:
+            $me = $auth->requireEditor();
+            $security->limit('write:user:' . $me['id'], 240, 3600, 'Slow down a moment.');
+            Http::json($courses->update((int) $m[1], Http::body(), (int) $me['id']));
+
+        case $method === 'DELETE' && preg_match('#^/courses/(\d+)$#', $path, $m) === 1:
+            $me = $auth->requireEditor();
+            $courses->destroy((int) $m[1], (int) $me['id']);
+            Http::json(['ok' => true]);
+
+        case $method === 'GET' && preg_match('#^/courses/(\d+)/stats$#', $path, $m) === 1:
+            $me = $auth->requireEditor();
+            Http::json($courses->stats((int) $m[1], (int) $me['id']));
+
+        case $method === 'POST' && preg_match('#^/courses/(\d+)/nodes$#', $path, $m) === 1:
+            $me = $auth->requireEditor();
+            $security->limit('write:user:' . $me['id'], 240, 3600, 'Slow down a moment.');
+            Http::json($courses->createNode((int) $m[1], Http::body(), (int) $me['id']), 201);
+
+        case $method === 'GET' && preg_match('#^/nodes/(\d+)$#', $path, $m) === 1:
+            $me = $auth->require();
+            Http::json($courses->node((int) $m[1], (int) $me['id'], in_array($me['role'], ['editor', 'owner'], true)));
+
+        case $method === 'PATCH' && preg_match('#^/nodes/(\d+)$#', $path, $m) === 1:
+            $me = $auth->requireEditor();
+            $security->limit('write:user:' . $me['id'], 240, 3600, 'Slow down a moment.');
+            Http::json($courses->updateNode((int) $m[1], Http::body(), (int) $me['id']));
+
+        case $method === 'DELETE' && preg_match('#^/nodes/(\d+)$#', $path, $m) === 1:
+            $me = $auth->requireEditor();
+            $courses->destroyNode((int) $m[1], (int) $me['id']);
+            Http::json(['ok' => true]);
+
+        case $route === 'POST /items':
+            $me = $auth->require();
+            Http::json(Items::save((int) $me['id'], Http::body()));
+
+        case $route === 'POST /lessons':
+            $me = $auth->require();
+            Http::json($courses->recordLesson((int) $me['id'], Http::body()), 201);
+
+        // ── Reports ─────────────────────────────────────────────────────────
+        case $route === 'POST /flags':
+            $me = $auth->require();
+            $security->limit('flag:user:' . $me['id'], 60, 3600, 'That is a lot of reports. Try again later.');
+            Http::json(Flags::create((int) $me['id'], Http::body()), 201);
+
+        case $route === 'GET /flags':
+            $me = $auth->requireEditor();
+            Http::json(['flags' => Flags::inbox((int) $me['id'], $me['role'] === 'owner')]);
+
+        case $route === 'POST /flags/settle':
+            $me   = $auth->requireEditor();
+            $body = Http::body();
+            Flags::settle(
+                is_string($body['item'] ?? null) ? $body['item'] : '',
+                is_string($body['status'] ?? null) ? $body['status'] : '',
+                (int) $me['id'],
+                $me['role'] === 'owner',
+            );
             Http::json(['ok' => true]);
 
         // ── Study state ─────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ import './styles/tokens.css'
 import './styles/base.css'
 import './styles/ui.css'
 import './styles/study.css'
+import './styles/learn.css'
 
 applyTheme(readTheme())
 applyLang(readLang())

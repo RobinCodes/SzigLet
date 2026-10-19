@@ -41,6 +41,25 @@ final class Util
         return mb_substr($s, 0, 60, 'UTF-8');
     }
 
+    /**
+     * A slug not yet taken in `$table`. The table name is always a literal
+     * from the caller, never input.
+     */
+    public static function uniqueSlug(string $table, string $base): string
+    {
+        $slug = $base;
+        $n    = 2;
+        while ((int) Db::value("SELECT COUNT(*) FROM $table WHERE slug = :s", ['s' => $slug]) > 0) {
+            $slug = $base . '-' . $n;
+            $n++;
+            if ($n > 500) {
+                $slug = $base . '-' . bin2hex(random_bytes(3));
+                break;
+            }
+        }
+        return $slug;
+    }
+
     public static function now(): int
     {
         return time();

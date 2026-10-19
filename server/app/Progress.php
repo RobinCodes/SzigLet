@@ -3,9 +3,24 @@ declare(strict_types=1);
 
 namespace SzigLet;
 
-/** Per-account study state, kept per direction so IT→HU and HU→IT differ. */
+/**
+ * Per-account study state, kept per direction so IT→HU and HU→IT differ.
+ *
+ * A direction is a pair of variations: "ab" and "ba" are the two languages
+ * either way round, as they always were, and anything else reads "a>v1" —
+ * Italian to Italian plural, say.
+ */
 final class Progress
 {
+    /**
+     * Every study session, from sets and from lessons alike: what time
+     * studied, the activity chart and the streaks are measured over.
+     */
+    private const SESSIONS =
+        'SELECT created_at, duration_ms FROM sl_results WHERE user_id = :u1
+         UNION ALL
+         SELECT created_at, duration_ms FROM sl_lesson_runs WHERE user_id = :u2';
+
     /**
      * @param array<string, mixed> $body
      * @return array{updated:int}
@@ -74,6 +89,14 @@ final class Progress
             ? self::direction($body['dir'])
             : null;
 
+        // Questions in a question set are tracked as lesson items.
+        if ($dir === null) {
+            Items::reset($userId, array_map(
+                static fn (array $r): string => 'q:' . $r['id'],
+                Db::all('SELECT id FROM sl_questions WHERE set_id = :s', ['s' => $setId]),
+            ));
+        }
+
         if ($dir === null) {
             Db::run(
                 'DELETE p FROM sl_progress p JOIN sl_cards c ON c.id = p.card_id
@@ -97,16 +120,18 @@ final class Progress
     {
         $setId = (int) ($body['setId'] ?? 0);
         $mode  = is_string($body['mode'] ?? null) ? $body['mode'] : '';
-        if ($setId <= 0 || !in_array($mode, ['flashcards', 'choice', 'write'], true)) {
+        if ($setId <= 0 || !in_array($mode, ['flashcards', 'choice', 'write', 'mixed'], true)) {
             Http::fail(422, 'missing_field', 'That result is incomplete.');
         }
 
         $total   = max(0, min(5000, (int) ($body['total'] ?? 0)));
         $correct = max(0, min($total, (int) ($body['correct'] ?? 0)));
 
+        // A test over only some of the cards is practice: it is kept for the
+        // statistics but does not count towards mastery.
         Db::run(
-            'INSERT INTO sl_results (user_id, set_id, dir, mode, total, correct, duration_ms, created_at)
-             VALUES (:u, :s, :d, :m, :total, :correct, :ms, :t)',
+            'INSERT INTO sl_results (user_id, set_id, dir, mode, total, correct, partial, duration_ms, created_at)
+             VALUES (:u, :s, :d, :m, :total, :correct, :partial, :ms, :t)',
             [
                 'u'       => $userId,
                 's'       => $setId,
@@ -114,6 +139,7 @@ final class Progress
                 'm'       => $mode,
                 'total'   => $total,
                 'correct' => $correct,
+                'partial' => !empty($body['partial']) ? 1 : 0,
                 'ms'      => max(0, min(86400000, (int) ($body['durationMs'] ?? 0))),
                 't'       => Util::now(),
             ],
@@ -140,7 +166,13 @@ final class Progress
         // be cleared with flashcards before a test even unlocks.
         $all = Db::one(
             'SELECT COUNT(*) AS sessions, COALESCE(SUM(duration_ms), 0) AS ms
-               FROM sl_results WHERE user_id = :u',
+               FROM (' . self::SESSIONS . ') x',
+            ['u1' => $userId, 'u2' => $userId],
+        ) ?? [];
+
+        $lessons = Db::one(
+            'SELECT COUNT(*) AS runs, COALESCE(SUM(total), 0) AS answered, COALESCE(SUM(correct), 0) AS correct
+               FROM sl_lesson_runs WHERE user_id = :u',
             ['u' => $userId],
         ) ?? [];
 
@@ -153,25 +185,32 @@ final class Progress
         ) ?? [];
 
         $recent = Db::all(
-            'SELECT r.created_at, r.mode, r.dir, r.total, r.correct, s.title, s.slug
-               FROM sl_results r JOIN sl_sets s ON s.id = r.set_id
-              WHERE r.user_id = :u AND r.mode <> \'flashcards\'
-              ORDER BY r.created_at DESC LIMIT 12',
-            ['u' => $userId],
+            'SELECT * FROM (
+                SELECT r.created_at, r.mode, r.dir, r.total, r.correct, s.title,
+                       CONCAT(\'/s/\', s.slug) AS link
+                  FROM sl_results r JOIN sl_sets s ON s.id = r.set_id
+                 WHERE r.user_id = :u1 AND r.mode <> \'flashcards\'
+                UNION ALL
+                SELECT l.created_at, \'lesson\' AS mode, \'ab\' AS dir, l.total, l.correct, n.title,
+                       CONCAT(\'/n/\', n.id) AS link
+                  FROM sl_lesson_runs l JOIN sl_nodes n ON n.id = l.node_id
+                 WHERE l.user_id = :u2
+             ) recent ORDER BY created_at DESC LIMIT 12',
+            ['u1' => $userId, 'u2' => $userId],
         );
 
         $days = Db::all(
             'SELECT FLOOR(created_at / 86400) AS day, COUNT(*) AS runs
-               FROM sl_results WHERE user_id = :u AND created_at > :since
+               FROM (' . self::SESSIONS . ') x WHERE created_at > :since
               GROUP BY day ORDER BY day ASC',
-            ['u' => $userId, 'since' => Util::now() - 30 * 86400],
+            ['u1' => $userId, 'u2' => $userId, 'since' => Util::now() - 30 * 86400],
         );
 
         return [
-            'runs'         => (int) ($tests['runs'] ?? 0),
+            'runs'         => (int) ($tests['runs'] ?? 0) + (int) ($lessons['runs'] ?? 0),
             'sessions'     => (int) ($all['sessions'] ?? 0),
-            'answered'     => (int) ($tests['answered'] ?? 0),
-            'correct'      => (int) ($tests['correct'] ?? 0),
+            'answered'     => (int) ($tests['answered'] ?? 0) + (int) ($lessons['answered'] ?? 0),
+            'correct'      => (int) ($tests['correct'] ?? 0) + (int) ($lessons['correct'] ?? 0),
             'studyMs'      => (int) ($all['ms'] ?? 0),
             'known'        => (int) ($known['known'] ?? 0),
             'rehearse'     => (int) ($known['rehearse'] ?? 0),
@@ -185,7 +224,7 @@ final class Progress
                 'total'   => (int) $r['total'],
                 'correct' => (int) $r['correct'],
                 'title'   => (string) $r['title'],
-                'slug'    => (string) $r['slug'],
+                'link'    => (string) $r['link'],
             ], $recent),
             'activity'     => array_map(static fn (array $r): array => [
                 'day'  => (int) $r['day'],
@@ -228,9 +267,9 @@ final class Progress
 
         $rows = Db::all(
             "SELECT DISTINCT $bucket AS bucket
-               FROM sl_results WHERE user_id = :u AND created_at > :since
+               FROM (" . self::SESSIONS . ") x WHERE created_at > :since
               ORDER BY bucket DESC",
-            ['u' => $userId, 'since' => max(0, Util::now() - $lookback * $size)],
+            ['u1' => $userId, 'u2' => $userId, 'since' => max(0, Util::now() - $lookback * $size)],
         );
         if ($rows === []) {
             return 0;
@@ -262,6 +301,10 @@ final class Progress
 
     private static function direction(mixed $value): string
     {
-        return $value === 'ba' ? 'ba' : 'ab';
+        if (is_string($value)
+            && preg_match('/^(ab|ba|[a-z][a-z0-9_]{0,9}>[a-z][a-z0-9_]{0,9})$/', $value) === 1) {
+            return $value;
+        }
+        return 'ab';
     }
 }
