@@ -289,3 +289,26 @@ ol {
 .enter {
   animation: fade-up var(--t-slow) var(--ease) both;
 }
+
+/*
+ * iOS zooms into any text field under 16px when it gets focus, even with
+ * zoom switched off in the viewport. On touch screens every field is at least
+ * 16px, so that never happens. `touch-action: manipulation` also stops a
+ * double tap from zooming.
+ */
+html {
+  touch-action: manipulation;
+}
+
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+
+  /* The answer box in a test is meant to be bigger than that. */
+  .answerbox:not(.answerbox--compact) .input {
+    font-size: 1.125rem !important;
+  }
+}

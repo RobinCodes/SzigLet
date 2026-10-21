@@ -7,10 +7,14 @@
       interactive-widget=resizes-content makes the layout viewport shrink when
       the on-screen keyboard opens, so a bottom sheet and its buttons stay
       above it instead of hiding behind it.
+
+      Zoom is off: this is an app, not a document. iOS zooms in on any field
+      with text under 16px the moment it is focused, aims at the wrong spot,
+      and an installed app has no way to zoom back out.
     -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5, interactive-widget=resizes-content"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content"
     />
     <meta name="description" content="A shared flashcard library — swipe to learn, test to be sure." />
     <meta name="theme-color" content="#0a0b0e" media="(prefers-color-scheme: dark)" />
