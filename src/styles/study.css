@@ -854,15 +854,14 @@
 }
 
 /*
- * `--kb` and `--vvh` are published by Sheet.tsx from `visualViewport`: the
- * height the on-screen keyboard covers, and the height that is actually
- * visible. iOS does not shrink the layout viewport for the keyboard, so
- * without them a fixed sheet sits behind it and its buttons are unreachable.
+ * On phones Sheet.tsx sets `top` from `visualViewport`, so the sheet sits at
+ * the bottom of what is visible — above the on-screen keyboard, which iOS
+ * does not take out of the layout viewport. `--vvh` is the visible height.
  */
 .sheet {
   position: fixed;
   z-index: 51;
-  inset: auto 0 var(--kb, 0px) 0;
+  inset: auto 0 0 0;
   display: flex;
   flex-direction: column;
   max-width: var(--col);
@@ -926,7 +925,21 @@
     border-bottom: 1px solid var(--line);
     max-width: 28rem;
     max-height: calc(var(--vvh, 100dvh) - 4rem);
-    animation: pop var(--t-base) var(--ease) both;
+    /* Its own entrance: the shared `pop` sets `transform` too, and with its
+       fill mode it replaced the translate above — the dialog's top edge then
+       sat at mid-screen and a tall one's buttons fell off the bottom. */
+    animation: dialog-in var(--t-base) var(--ease) both;
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%);
   }
 }
 
