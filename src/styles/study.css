@@ -241,6 +241,13 @@
   pointer-events: none;
 }
 
+/* Held for the instant the next card is put in place: nothing on it may
+   animate out of the state the last card left behind. */
+.flashcard--resetting,
+.flashcard--resetting * {
+  transition: none !important;
+}
+
 .flashcard__face {
   position: absolute;
   inset: 0;
