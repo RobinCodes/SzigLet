@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { haptics } from '../lib/haptics'
 import { displayAnswer } from '../lib/text'
 import { useI18n } from '../lib/i18n'
@@ -47,6 +47,25 @@ export function SwipeDeck({
   const { t } = useI18n()
   const [flipped, setFlipped] = useState(false)
   const [leaving, setLeaving] = useState<Verdict | null>(null)
+
+  /**
+   * Every new presentation starts face-up.
+   *
+   * This keys off the queue rather than the card id on purpose. Rehearsing the
+   * only card left puts that same card straight back on top, so the id does
+   * not change — and the deck used to stay stuck in its "leaving" state with
+   * the card parked off screen, refusing every further swipe.
+   *
+   * The reset happens while rendering, not in an effect: an effect runs only
+   * after the new card has been drawn, so its first frames still carried the
+   * last card's flip and showed the new card's answer.
+   */
+  const [shown, setShown] = useState(queue)
+  if (shown !== queue) {
+    setShown(queue)
+    setFlipped(false)
+    setLeaving(null)
+  }
 
   const cardRef = useRef<HTMLDivElement>(null)
   const knownStamp = useRef<HTMLSpanElement>(null)
@@ -116,31 +135,28 @@ export function SwipeDeck({
   useEffect(() => cancelFrame, [cancelFrame])
 
   /**
-   * Every new presentation starts face-up and untransformed.
-   *
-   * This keys off the queue rather than the card id on purpose. Rehearsing the
-   * only card left puts that same card straight back on top, so the id does
-   * not change — and the deck used to stay stuck in its "leaving" state with
-   * the card parked off screen, refusing every further swipe.
+   * A new presentation is also put back in place: the element is the one the
+   * last card flew off on. This runs before the first paint, with every
+   * transition on the card held off. Animated, the new card would turn round
+   * from the last card's flip, answer first, and wear the last verdict stamp
+   * while it faded out.
    */
-  useEffect(() => {
-    setFlipped(false)
-    setLeaving(null)
+  useLayoutEffect(() => {
     cancelFrame()
     offset.current = { dx: 0, dy: 0 }
     drag.current.active = false
 
     const node = cardRef.current
-    if (node) {
-      // The exit transition is still on the element at this point, so the
-      // reset has to be made outside of it or the card would glide back.
-      node.style.transition = 'none'
-      node.style.transform = ''
-      node.style.opacity = ''
-      void node.offsetWidth
-      node.style.transition = ''
+    if (!node) {
+      return
     }
+    node.classList.add('flashcard--resetting')
+    node.style.transform = ''
+    node.style.opacity = ''
     paintStamps(0)
+    // Commit the reset while transitions are off, so nothing animates it.
+    void node.offsetWidth
+    node.classList.remove('flashcard--resetting')
   }, [queue, paintStamps, cancelFrame])
 
   /** Sends the top card off screen, then reports the verdict. */
